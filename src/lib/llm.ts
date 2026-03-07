@@ -1,19 +1,11 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import { OfferComparison, XanoOffer, DiscoveredOffer } from "@/types";
 
-const getClient = () => {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new Error("GEMINI_API_KEY not set");
-  return new GoogleGenerativeAI(apiKey);
-};
+const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+const MODEL = process.env.OPENROUTER_MODEL ?? "meta-llama/llama-3.3-70b-instruct:free";
 
-// NOTE: Using free "gemini-2.0-flash" model.
-// For production, consider "gemini-2.0-pro" for better accuracy.
-const MODEL = "gemini-2.0-flash";
-
-// Rate limiting for Gemini free tier (15 RPM / ~1000 RPD)
+// Rate limiting for free tier
 let lastCallTime = 0;
-const MIN_DELAY_MS = 5000; // 5 seconds between calls
+const MIN_DELAY_MS = 2000;
 
 async function rateLimit() {
   const now = Date.now();
@@ -24,22 +16,45 @@ async function rateLimit() {
   lastCallTime = Date.now();
 }
 
+async function chatCompletion(
+  systemPrompt: string,
+  userPrompt: string
+): Promise<string> {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) throw new Error("OPENROUTER_API_KEY not set");
+
+  await rateLimit();
+
+  const response = await fetch(OPENROUTER_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: MODEL,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      response_format: { type: "json_object" },
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`OpenRouter API error ${response.status}: ${errorText}`);
+  }
+
+  const data = await response.json();
+  return data.choices?.[0]?.message?.content ?? "{}";
+}
+
 export async function extractStructuredData(
   systemPrompt: string,
   userPrompt: string
 ): Promise<string> {
-  const genAI = getClient();
-  const model = genAI.getGenerativeModel({
-    model: MODEL,
-    systemInstruction: systemPrompt,
-    generationConfig: {
-      responseMimeType: "application/json",
-    },
-  });
-
-  await rateLimit();
-  const result = await model.generateContent(userPrompt);
-  return result.response.text();
+  return chatCompletion(systemPrompt, userPrompt);
 }
 
 export async function analyzeOfferComparison(
@@ -48,14 +63,6 @@ export async function analyzeOfferComparison(
   existingOffer: XanoOffer | null,
   discoveredOffers: DiscoveredOffer[]
 ): Promise<OfferComparison> {
-  const genAI = getClient();
-  const model = genAI.getGenerativeModel({
-    model: MODEL,
-    generationConfig: {
-      responseMimeType: "application/json",
-    },
-  });
-
   const existingDesc = existingOffer
     ? `Current offer: "${existingOffer.Offer_Name}" - Type: ${existingOffer.offer_type}, Deposit: $${existingOffer.Expected_Deposit}, Bonus: $${existingOffer.Expected_Bonus}`
     : "No existing offer in our database.";
@@ -84,9 +91,10 @@ Respond with a JSON object with these exact fields:
 - "explanation": brief explanation of the comparison result and key differences
 - "recommended_action": what action to take based on findings`;
 
-  await rateLimit();
-  const result = await model.generateContent(prompt);
-  const text = result.response.text();
+  const text = await chatCompletion(
+    "You are a casino promotions analyst. Always respond with valid JSON.",
+    prompt
+  );
 
   let input: Record<string, unknown>;
   try {

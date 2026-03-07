@@ -7,8 +7,9 @@ import {
   XanoOffer,
 } from "@/types";
 import { fetchExistingOffers } from "./xano";
+import { discoverCasinosExa } from "./exa";
 import { searchTavily, batchSearch } from "./tavily";
-import { extractStructuredData, analyzeOfferComparison } from "./gemini";
+import { extractStructuredData, analyzeOfferComparison } from "./llm";
 import { matchCasinos } from "./casino-matcher";
 import { saveReport } from "./store";
 import {
@@ -89,7 +90,7 @@ export async function runResearchPipeline(
     onProgress
   );
 
-  onProgress?.("analysis", "Analyzing offer comparisons with Gemini...", 70);
+  onProgress?.("analysis", "Analyzing offer comparisons...", 70);
 
   // Stage 4: Gemini analysis for matched casinos
   const comparisons: OfferComparison[] = [];
@@ -162,46 +163,39 @@ async function discoverAllCasinos(
 ): Promise<Map<string, DiscoveredCasino[]>> {
   const results = new Map<string, DiscoveredCasino[]>();
 
-  // Step 1: Search with Tavily (advanced depth) for each state
-  // Run sequentially to respect rate limits and maximize quality
-  const searchResults: { state: typeof STATES[number]; res: Awaited<ReturnType<typeof searchTavily>> }[] = [];
+  // Step 1: Search with Exa (semantic search) for each state
+  // Two searches per state: official sources + review sites
   for (const state of STATES) {
-    counters.searchQueries++;
-    const res = await searchTavily({
-      query: buildDiscoveryUserPrompt(state),
-      searchDepth: "advanced",
-      maxResults: 15,
-    });
-    searchResults.push({ state, res });
-  }
-
-  // Step 2: Use Gemini to extract structured data from search results
-  for (const { state, res } of searchResults) {
-    const citations = res.results.map((r) => r.url);
-    counters.totalCitations += citations.length;
-
-    // Use raw_content when available for full page data, fallback to snippet
-    const searchContext = res.results
-      .map((r) => {
-        const body = r.raw_content
-          ? r.raw_content.substring(0, 3000)
-          : r.content;
-        return `[${r.title}](${r.url})\n${body}`;
-      })
-      .join("\n\n---\n\n");
-
-    // Include Tavily's AI answer as an additional high-quality summary
-    const answerSection = res.answer
-      ? `\n\nAI-generated summary of search results:\n${res.answer}\n\n`
-      : "";
-
-    const jsonSchemaHint = JSON.stringify(DISCOVERY_JSON_SCHEMA, null, 2);
-
+    counters.searchQueries += 2; // Exa does 2 searches per state
     try {
+      const exaResults = await discoverCasinosExa(
+        state.name,
+        state.code,
+        state.gaming_commission,
+        state.search_domains
+      );
+
+      const citations = exaResults.allResults.map((r) => r.url);
+      counters.totalCitations += citations.length;
+
+      // Build rich context from Exa's full text + highlights
+      const searchContext = exaResults.allResults
+        .map((r) => {
+          const highlights = r.highlights?.length
+            ? `\nKey excerpts: ${r.highlights.join(" | ")}`
+            : "";
+          const text = r.text ? r.text.substring(0, 4000) : "";
+          return `[${r.title}](${r.url})\n${text}${highlights}`;
+        })
+        .join("\n\n---\n\n");
+
+      const jsonSchemaHint = JSON.stringify(DISCOVERY_JSON_SCHEMA, null, 2);
+
+      // Step 2: Use LLM to extract structured casino list
       counters.llmQueries++;
       const content = await extractStructuredData(
         DISCOVERY_SYSTEM_PROMPT,
-        `Based on the following search results, ${buildDiscoveryUserPrompt(state)}\n${answerSection}Search results:\n${searchContext}\n\nIMPORTANT: Extract EVERY casino mentioned across all sources. Do not miss any. Include casinos from regulatory lists, review sites, and any other sources.\n\nRespond with JSON matching this schema:\n${jsonSchemaHint}`
+        `Based on the following search results, ${buildDiscoveryUserPrompt(state)}\n\nSearch results:\n${searchContext}\n\nIMPORTANT: Extract EVERY casino mentioned across all sources. Do not miss any. Include casinos from regulatory lists, review sites, and any other sources. Only include online casinos (not land-based only).\n\nRespond with JSON matching this schema:\n${jsonSchemaHint}`
       );
 
       const parsed = JSON.parse(content);
