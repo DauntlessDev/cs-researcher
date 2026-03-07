@@ -1,98 +1,125 @@
 # Casino & Offer AI Researcher
 
-An intelligent research tool that identifies gaps in casino promotional offer coverage across NJ, MI, PA, and WV. Uses AI-powered research to discover missing casinos and find better promotional offers compared to our existing database.
+An AI-powered research tool that identifies gaps in casino promotional offer coverage across NJ, MI, PA, and WV. It discovers casinos we're not tracking, researches current promotions, and compares them against our existing database.
 
 ## How It Works
 
-1. **Casino Discovery** - Queries state gaming commissions via Perplexity Sonar Pro to identify all licensed online casinos in each state
-2. **Gap Analysis** - Compares discovered casinos against our existing database (Xano API) using fuzzy name matching
-3. **Offer Research** - Researches current promotional offers for every casino (existing + newly discovered)
-4. **AI Analysis** - Claude compares discovered offers against our current data, flagging genuinely superior offers
-5. **Report** - Presents findings in a clean dashboard with citations and actionable insights
+The system runs a 4-stage pipeline:
 
-## Quick Start
+1. **Discover** — Exa AI performs semantic searches for licensed online casinos per state, targeting gaming commission sources and review aggregators
+2. **Match** — Fuzzy matching (normalization + Levenshtein distance) compares discovered casinos against the Xano database to find missing ones
+3. **Research** — Tavily searches for current promotional offers for every casino (both existing and newly discovered)
+4. **Analyze** — An LLM (via OpenRouter) extracts structured offer data and compares discovered offers against our current ones, producing a verdict for each
+
+Results are displayed in a dashboard with:
+- Executive summary with per-state breakdown
+- Cross-state offer comparison table
+- Missing casinos grouped by state
+- Offer comparison cards with EV scoring
+- Filters by state and verdict
+
+## AI Stack
+
+| Role | Service | Why |
+|---|---|---|
+| Casino Discovery | [Exa AI](https://exa.ai) | Semantic search returns full page content from regulatory sources — finds more casinos than keyword search |
+| Offer Research | [Tavily](https://tavily.com) | Advanced search with raw content extraction, good for site-specific offer lookups |
+| Extraction & Analysis | [OpenRouter](https://openrouter.ai) (Llama 3.3 70B) | Free LLM for structured JSON extraction and offer comparison |
+
+All three services are free tier — zero cost per run.
+
+## Setup
+
+### Prerequisites
+- Node.js 18+
+- API keys (all free, no credit card required):
+  - [Exa AI](https://exa.ai) — sign up, get API key
+  - [Tavily](https://tavily.com) — sign up, get API key
+  - [OpenRouter](https://openrouter.ai) — sign in with GitHub, create API key
+
+### Install
 
 ```bash
-# Install dependencies
+cd casino-researcher
 npm install
+cp .env.example .env
+```
 
-# Set environment variables
-cp .env.example .env.local
-# Edit .env.local with your API keys
+Edit `.env` with your API keys:
 
-# Run development server
+```
+TAVILY_API_KEY=tvly-your-key-here
+EXA_API_KEY=your-exa-key-here
+OPENROUTER_API_KEY=sk-or-your-key-here
+OPENROUTER_MODEL=meta-llama/llama-3.3-70b-instruct:free
+CRON_SECRET=any-random-string
+```
+
+### Run
+
+```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) to view the dashboard.
+Open [http://localhost:3000](http://localhost:3000) and click **Run Research**.
 
-## Environment Variables
+## Execution Model
 
-| Variable | Description |
-|----------|-------------|
-| `PERPLEXITY_API_KEY` | Perplexity API key for web research |
-| `ANTHROPIC_API_KEY` | Anthropic API key for offer analysis |
-| `CRON_SECRET` | Secret token to authenticate scheduled runs |
-
-## Running Research
-
-**On-demand:** Click the "Run Research" button on the dashboard.
-
-**Scheduled:** Runs daily at 6 AM UTC via Vercel Cron. Configure in `vercel.json`.
-
-**API:** `POST /api/research/run`
+- **On-demand**: Click "Run Research" in the dashboard
+- **Scheduled**: Vercel cron runs daily at 6am UTC (configured in `vercel.json`)
+- **API**: `POST /api/research/run`
 
 ## Project Structure
 
 ```
 src/
-  app/
-    page.tsx                  # Dashboard - report view + run button
-    api/research/run/route.ts # Main research orchestrator
-    api/cron/route.ts         # Scheduled run handler
-    report/[id]/page.tsx      # Historical report view
-  lib/
-    perplexity.ts             # Perplexity Sonar Pro client
-    claude.ts                 # Anthropic SDK wrapper
-    xano.ts                   # Existing offers API client
-    research-pipeline.ts      # Orchestration logic
-    casino-matcher.ts         # Fuzzy name matching
-    store.ts                  # Report storage
-  prompts/
-    casino-discovery.ts       # Casino discovery prompts
-    offer-research.ts         # Offer research prompts
-    offer-analysis.ts         # Comparison/scoring prompts
-  types/
-    index.ts                  # TypeScript interfaces
-  components/
-    ReportDashboard.tsx       # Main report view
-    MissingCasinosTable.tsx   # Missing casinos by state
-    OfferComparisonCard.tsx   # Side-by-side offer comparison
-    ExecutiveSummary.tsx      # Stats overview
-    RunButton.tsx             # Trigger research on-demand
+├── app/                      # Next.js pages and API routes
+│   ├── page.tsx              # Dashboard homepage
+│   ├── report/[id]/          # Individual report view
+│   └── api/
+│       ├── research/run/     # POST — trigger pipeline
+│       └── cron/             # GET — scheduled daily run
+├── components/
+│   ├── ReportDashboard.tsx   # Main report layout with filters
+│   ├── ExecutiveSummary.tsx  # Stats overview + per-state breakdown
+│   ├── CrossStateTable.tsx   # Offers across states per casino
+│   ├── MissingCasinosTable.tsx # Missing casinos grouped by state
+│   ├── OfferComparisonCard.tsx # Side-by-side offer comparison with EV
+│   └── RunButton.tsx         # Trigger button with status
+├── lib/
+│   ├── exa.ts               # Exa AI search client
+│   ├── tavily.ts            # Tavily search client
+│   ├── llm.ts               # OpenRouter LLM client
+│   ├── xano.ts              # Xano API client
+│   ├── casino-matcher.ts    # Fuzzy name matching
+│   ├── research-pipeline.ts # Pipeline orchestration
+│   └── store.ts             # Report storage
+├── prompts/
+│   ├── casino-discovery.ts  # Discovery prompts + JSON schema
+│   └── offer-research.ts    # Offer research prompts + JSON schema
+└── types/
+    └── index.ts             # TypeScript interfaces + state config
 ```
 
 ## Deployment
 
 ```bash
-# Deploy to Vercel
 npx vercel
-
 # Set environment variables in Vercel dashboard
 # Cron job is configured automatically via vercel.json
 ```
 
-## Cost Per Run
+## Trade-offs & Limitations
 
-| Service | Estimated Cost |
-|---------|---------------|
-| Perplexity Sonar Pro (~34 queries) | ~$0.14 - $1.50 |
-| Claude Sonnet (~30 comparisons) | ~$0.20 |
-| Vercel hosting + cron | Free |
-| **Total** | **~$0.35 - $2.00** |
+- **Storage is ephemeral on Vercel** — reports are saved to filesystem (`/tmp` on serverless). For production, use a database or S3.
+- **AI accuracy varies** — all findings include source URLs for human verification. The system surfaces candidates, not ground truth.
+- **Free tier rate limits** — OpenRouter: 200 requests/day (~3 full runs). Exa and Tavily: 1,000 requests/month each.
+- **LLM model is configurable** — change `OPENROUTER_MODEL` in `.env` to try different models.
 
-## Documentation
+## What I'd Improve With More Time
 
-- [Architecture](docs/ARCHITECTURE.md) - System design and technical decisions
-- [AI Strategy](docs/AI-STRATEGY.md) - AI tools, models, and prompt engineering approach
-- [Trade-offs & Future Work](docs/TRADE-OFFS.md) - Limitations, trade-offs, and improvement roadmap
+- Persistent storage (database or S3 instead of filesystem)
+- Streaming progress updates to the UI via SSE
+- Historical trend tracking (offer changes over time)
+- Email/Slack alerts when better offers are found
+- Confidence calibration with human feedback loop
