@@ -3,12 +3,14 @@ interface TavilySearchOptions {
   searchDepth?: "basic" | "advanced";
   maxResults?: number;
   includeDomains?: string[];
+  topic?: "general" | "news";
 }
 
 export interface TavilyResult {
   title: string;
   url: string;
   content: string;
+  raw_content?: string;
 }
 
 interface TavilyResponse {
@@ -24,9 +26,11 @@ export async function searchTavily(
 
   const body: Record<string, unknown> = {
     query: options.query,
-    search_depth: options.searchDepth ?? "basic",
+    search_depth: options.searchDepth ?? "advanced",
     max_results: options.maxResults ?? 10,
-    include_answer: true,
+    include_answer: "advanced",
+    include_raw_content: true,
+    topic: options.topic ?? "general",
   };
 
   if (options.includeDomains?.length) {
@@ -53,6 +57,7 @@ export async function searchTavily(
       title: r.title ?? "",
       url: r.url ?? "",
       content: r.content ?? "",
+      raw_content: r.raw_content ?? "",
     })),
     answer: data.answer,
   };
@@ -61,7 +66,7 @@ export async function searchTavily(
 // Run searches with concurrency limit
 export async function batchSearch(
   searches: TavilySearchOptions[],
-  concurrency = 5
+  concurrency = 3
 ): Promise<TavilyResponse[]> {
   const results: TavilyResponse[] = [];
 
@@ -71,7 +76,7 @@ export async function batchSearch(
     results.push(...batchResults);
 
     if (i + concurrency < searches.length) {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await new Promise((resolve) => setTimeout(resolve, 1500));
     }
   }
 

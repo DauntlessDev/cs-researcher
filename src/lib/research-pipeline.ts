@@ -162,25 +162,38 @@ async function discoverAllCasinos(
 ): Promise<Map<string, DiscoveredCasino[]>> {
   const results = new Map<string, DiscoveredCasino[]>();
 
-  // Step 1: Search with Tavily for each state
-  const searchResults = await Promise.all(
-    STATES.map((state) => {
-      counters.searchQueries++;
-      return searchTavily({
-        query: buildDiscoveryUserPrompt(state),
-        maxResults: 10,
-      }).then((res) => ({ state, res }));
-    })
-  );
+  // Step 1: Search with Tavily (advanced depth) for each state
+  // Run sequentially to respect rate limits and maximize quality
+  const searchResults: { state: typeof STATES[number]; res: Awaited<ReturnType<typeof searchTavily>> }[] = [];
+  for (const state of STATES) {
+    counters.searchQueries++;
+    const res = await searchTavily({
+      query: buildDiscoveryUserPrompt(state),
+      searchDepth: "advanced",
+      maxResults: 15,
+    });
+    searchResults.push({ state, res });
+  }
 
   // Step 2: Use Gemini to extract structured data from search results
   for (const { state, res } of searchResults) {
     const citations = res.results.map((r) => r.url);
     counters.totalCitations += citations.length;
 
+    // Use raw_content when available for full page data, fallback to snippet
     const searchContext = res.results
-      .map((r) => `[${r.title}](${r.url})\n${r.content}`)
-      .join("\n\n");
+      .map((r) => {
+        const body = r.raw_content
+          ? r.raw_content.substring(0, 3000)
+          : r.content;
+        return `[${r.title}](${r.url})\n${body}`;
+      })
+      .join("\n\n---\n\n");
+
+    // Include Tavily's AI answer as an additional high-quality summary
+    const answerSection = res.answer
+      ? `\n\nAI-generated summary of search results:\n${res.answer}\n\n`
+      : "";
 
     const jsonSchemaHint = JSON.stringify(DISCOVERY_JSON_SCHEMA, null, 2);
 
@@ -188,7 +201,7 @@ async function discoverAllCasinos(
       counters.llmQueries++;
       const content = await extractStructuredData(
         DISCOVERY_SYSTEM_PROMPT,
-        `Based on the following search results, ${buildDiscoveryUserPrompt(state)}\n\nSearch results:\n${searchContext}\n\nRespond with JSON matching this schema:\n${jsonSchemaHint}`
+        `Based on the following search results, ${buildDiscoveryUserPrompt(state)}\n${answerSection}Search results:\n${searchContext}\n\nIMPORTANT: Extract EVERY casino mentioned across all sources. Do not miss any. Include casinos from regulatory lists, review sites, and any other sources.\n\nRespond with JSON matching this schema:\n${jsonSchemaHint}`
       );
 
       const parsed = JSON.parse(content);
@@ -219,15 +232,16 @@ async function researchAllOffers(
 ): Promise<Map<string, DiscoveredOffer[]>> {
   const offersByKey = new Map<string, DiscoveredOffer[]>();
 
-  // Step 1: Batch search with Tavily
+  // Step 1: Batch search with Tavily (advanced depth for quality)
   const searches = casinos.map((casino) => ({
     query: buildOfferResearchPrompt(casino.name, casino.state),
-    maxResults: 8,
+    searchDepth: "advanced" as const,
+    maxResults: 10,
     includeDomains: extractHostname(casino.website),
   }));
 
   counters.searchQueries += searches.length;
-  const searchResponses = await batchSearch(searches);
+  const searchResponses = await batchSearch(searches, 3);
 
   // Step 2: Use Gemini to extract structured offers from each search result
   const jsonSchemaHint = JSON.stringify(OFFER_RESEARCH_JSON_SCHEMA, null, 2);
@@ -239,15 +253,25 @@ async function researchAllOffers(
     const citations = res.results.map((r) => r.url);
     counters.totalCitations += citations.length;
 
+    // Use raw_content for full page data when available
     const searchContext = res.results
-      .map((r) => `[${r.title}](${r.url})\n${r.content}`)
-      .join("\n\n");
+      .map((r) => {
+        const body = r.raw_content
+          ? r.raw_content.substring(0, 2000)
+          : r.content;
+        return `[${r.title}](${r.url})\n${body}`;
+      })
+      .join("\n\n---\n\n");
+
+    const answerSection = res.answer
+      ? `\n\nAI-generated summary:\n${res.answer}\n\n`
+      : "";
 
     try {
       counters.llmQueries++;
       const content = await extractStructuredData(
         OFFER_RESEARCH_SYSTEM_PROMPT,
-        `Based on the following search results, ${buildOfferResearchPrompt(casino.name, casino.state)}\n\nSearch results:\n${searchContext}\n\nRespond with JSON matching this schema:\n${jsonSchemaHint}`
+        `Based on the following search results, ${buildOfferResearchPrompt(casino.name, casino.state)}\n${answerSection}Search results:\n${searchContext}\n\nExtract ALL promotional offers found. Include deposit match amounts, bonus amounts, wagering requirements, and promo codes when available.\n\nRespond with JSON matching this schema:\n${jsonSchemaHint}`
       );
 
       const parsed = JSON.parse(content);
