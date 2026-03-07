@@ -92,7 +92,7 @@ export async function runResearchPipeline(
 
   onProgress?.("analysis", "Analyzing offer comparisons...", 70);
 
-  // Stage 4: Gemini analysis for matched casinos
+  // Stage 4: LLM analysis for matched casinos
   const comparisons: OfferComparison[] = [];
 
   for (let i = 0; i < allMatched.length; i++) {
@@ -145,8 +145,8 @@ export async function runResearchPipeline(
     comparisons,
     metadata: {
       duration_ms: Date.now() - startTime,
-      perplexity_queries: counters.searchQueries,
-      claude_queries: counters.llmQueries,
+      search_queries: counters.searchQueries,
+      llm_queries: counters.llmQueries,
       estimated_cost: 0, // Free tier - no cost
       total_citations: counters.totalCitations,
     },
@@ -237,7 +237,7 @@ async function researchAllOffers(
   counters.searchQueries += searches.length;
   const searchResponses = await batchSearch(searches, 3);
 
-  // Step 2: Use Gemini to extract structured offers from each search result
+  // Step 2: Use LLM to extract structured offers from each search result
   const jsonSchemaHint = JSON.stringify(OFFER_RESEARCH_JSON_SCHEMA, null, 2);
 
   for (let i = 0; i < casinos.length; i++) {

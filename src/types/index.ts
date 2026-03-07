@@ -1,4 +1,3 @@
-// Xano API response types
 export interface XanoOffer {
   id: number;
   casinodb_id: number;
@@ -6,12 +5,11 @@ export interface XanoOffer {
   offer_type: string;
   Expected_Deposit: number;
   Expected_Bonus: number;
-  Name: string; // casino name
+  Name: string;
   states_id: number;
   state: { Name: string; Abbreviation: string };
 }
 
-// Discovered via Perplexity
 export interface DiscoveredCasino {
   name: string;
   operator: string;
@@ -33,7 +31,6 @@ export interface DiscoveredOffer {
   source_urls: string[];
 }
 
-// Matching results
 export interface MatchResult {
   missing: DiscoveredCasino[];
   matched: {
@@ -42,7 +39,6 @@ export interface MatchResult {
   }[];
 }
 
-// Claude analysis
 export type OfferVerdict =
   | "discovered_better"
   | "existing_better"
@@ -61,7 +57,6 @@ export interface OfferComparison {
   recommended_action: string;
 }
 
-// Full report
 export interface ResearchReport {
   id: string;
   timestamp: string;
@@ -70,21 +65,13 @@ export interface ResearchReport {
   comparisons: OfferComparison[];
   metadata: {
     duration_ms: number;
-    perplexity_queries: number; // kept for report compatibility (now Tavily)
-    claude_queries: number; // kept for report compatibility (now Gemini)
+    search_queries: number;
+    llm_queries: number;
     estimated_cost: number;
     total_citations: number;
   };
 }
 
-// Pipeline progress
-export interface PipelineProgress {
-  stage: string;
-  detail: string;
-  percent: number;
-}
-
-// State config
 export interface StateConfig {
   code: string;
   name: string;

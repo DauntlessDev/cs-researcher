@@ -47,18 +47,3 @@ export async function getLatestReport(): Promise<ResearchReport | null> {
   }
 }
 
-export async function listReports(): Promise<{ id: string; timestamp: string }[]> {
-  try {
-    await ensureDir();
-    const files = await fs.readdir(DATA_DIR);
-    const reports: { id: string; timestamp: string }[] = [];
-    for (const f of files.filter((f) => f.endsWith(".json"))) {
-      const data = await fs.readFile(path.join(DATA_DIR, f), "utf-8");
-      const report = JSON.parse(data) as ResearchReport;
-      reports.push({ id: report.id, timestamp: report.timestamp });
-    }
-    return reports.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-  } catch {
-    return [];
-  }
-}

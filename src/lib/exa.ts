@@ -13,7 +13,7 @@ interface ExaResponse {
   requestId: string;
 }
 
-export async function searchExa(options: {
+async function searchExa(options: {
   query: string;
   numResults?: number;
   type?: "auto" | "neural" | "deep";

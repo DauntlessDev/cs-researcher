@@ -19,8 +19,6 @@ export default function ReportDashboard({ report }: { report: ResearchReport }) 
   const [stateFilter, setStateFilter] = useState<string>("all");
   const [verdictFilter, setVerdictFilter] = useState<string>("all");
 
-  const duration = Math.round(report.metadata.duration_ms / 1000);
-
   const filteredComparisons = report.comparisons
     .filter((c) => stateFilter === "all" || c.state === stateFilter)
     .filter((c) => verdictFilter === "all" || c.verdict === verdictFilter)
@@ -118,10 +116,10 @@ export default function ReportDashboard({ report }: { report: ResearchReport }) 
         <span>
           Generated: {new Date(report.timestamp).toLocaleString()}
         </span>
-        <span>Duration: {duration}s</span>
+        <span>Duration: {Math.round(report.metadata.duration_ms / 1000)}s</span>
         <span>
-          API calls: {report.metadata.perplexity_queries} search +{" "}
-          {report.metadata.claude_queries} analysis
+          API calls: {report.metadata.search_queries} search +{" "}
+          {report.metadata.llm_queries} analysis
         </span>
         <span>Est. cost: ${report.metadata.estimated_cost.toFixed(2)}</span>
         <span>{report.metadata.total_citations} sources cited</span>

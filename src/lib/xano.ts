@@ -12,14 +12,3 @@ export async function fetchExistingOffers(): Promise<XanoOffer[]> {
   return data as XanoOffer[];
 }
 
-export function groupOffersByState(
-  offers: XanoOffer[]
-): Record<string, XanoOffer[]> {
-  const grouped: Record<string, XanoOffer[]> = {};
-  for (const offer of offers) {
-    const state = offer.state?.Abbreviation?.toUpperCase() || "UNKNOWN";
-    if (!grouped[state]) grouped[state] = [];
-    grouped[state].push(offer);
-  }
-  return grouped;
-}
