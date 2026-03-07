@@ -11,6 +11,19 @@ const getClient = () => {
 // For production, consider "gemini-2.0-pro" for better accuracy.
 const MODEL = "gemini-2.0-flash";
 
+// Rate limiting for Gemini free tier (15 RPM / ~1000 RPD)
+let lastCallTime = 0;
+const MIN_DELAY_MS = 5000; // 5 seconds between calls
+
+async function rateLimit() {
+  const now = Date.now();
+  const elapsed = now - lastCallTime;
+  if (elapsed < MIN_DELAY_MS) {
+    await new Promise((resolve) => setTimeout(resolve, MIN_DELAY_MS - elapsed));
+  }
+  lastCallTime = Date.now();
+}
+
 export async function extractStructuredData(
   systemPrompt: string,
   userPrompt: string
@@ -24,6 +37,7 @@ export async function extractStructuredData(
     },
   });
 
+  await rateLimit();
   const result = await model.generateContent(userPrompt);
   return result.response.text();
 }
@@ -70,6 +84,7 @@ Respond with a JSON object with these exact fields:
 - "explanation": brief explanation of the comparison result and key differences
 - "recommended_action": what action to take based on findings`;
 
+  await rateLimit();
   const result = await model.generateContent(prompt);
   const text = result.response.text();
 

@@ -46,7 +46,7 @@ export function matchCasinos(
   state: string
 ): MatchResult {
   const stateOffers = existingOffers.filter(
-    (o) => o.state?.toUpperCase() === state.toUpperCase()
+    (o) => o.state?.Abbreviation?.toUpperCase() === state.toUpperCase()
   );
 
   const matched: MatchResult["matched"] = [];

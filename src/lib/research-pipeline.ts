@@ -169,7 +169,6 @@ async function discoverAllCasinos(
       return searchTavily({
         query: buildDiscoveryUserPrompt(state),
         maxResults: 10,
-        includeDomains: state.search_domains,
       }).then((res) => ({ state, res }));
     })
   );
@@ -204,8 +203,8 @@ async function discoverAllCasinos(
         })
       );
       results.set(state.code, casinos);
-    } catch {
-      console.error(`Failed to parse discovery results for ${state.code}`);
+    } catch (err) {
+      console.error(`Failed to parse discovery results for ${state.code}:`, err);
       results.set(state.code, []);
     }
   }

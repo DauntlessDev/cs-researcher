@@ -17,7 +17,7 @@ export function groupOffersByState(
 ): Record<string, XanoOffer[]> {
   const grouped: Record<string, XanoOffer[]> = {};
   for (const offer of offers) {
-    const state = offer.state?.toUpperCase() || "UNKNOWN";
+    const state = offer.state?.Abbreviation?.toUpperCase() || "UNKNOWN";
     if (!grouped[state]) grouped[state] = [];
     grouped[state].push(offer);
   }

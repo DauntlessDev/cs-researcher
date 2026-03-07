@@ -8,7 +8,7 @@ export interface XanoOffer {
   Expected_Bonus: number;
   Name: string; // casino name
   states_id: number;
-  state: string;
+  state: { Name: string; Abbreviation: string };
 }
 
 // Discovered via Perplexity

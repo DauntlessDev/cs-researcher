@@ -33,6 +33,19 @@ const VERDICT_CONFIG = {
   },
 };
 
+function calculateEV(
+  bonusAmount: number | null,
+  wagering: string | null
+): number | null {
+  if (bonusAmount == null || !wagering) return null;
+  const match = wagering.match(/(\d+)x/i);
+  if (!match) return null;
+  const multiplier = parseInt(match[1], 10);
+  if (multiplier <= 0) return null;
+  // Simplified EV: bonus / wagering multiplier (higher = better)
+  return Math.round((bonusAmount / multiplier) * 100) / 100;
+}
+
 export default function OfferComparisonCard({
   comparison,
 }: {
@@ -91,6 +104,14 @@ export default function OfferComparisonCard({
                   {offer.bonus_amount != null && ` | Bonus: $${offer.bonus_amount}`}
                   {offer.deposit_required != null && ` | Deposit: $${offer.deposit_required}`}
                   {offer.wagering_requirement && ` | Wagering: ${offer.wagering_requirement}`}
+                  {(() => {
+                    const ev = calculateEV(offer.bonus_amount, offer.wagering_requirement);
+                    return ev != null ? (
+                      <span className="ml-1 px-1.5 py-0.5 bg-indigo-100 text-indigo-700 rounded text-xs font-medium">
+                        EV: ${ev}
+                      </span>
+                    ) : null;
+                  })()}
                 </div>
                 {offer.source_urls.length > 0 && (
                   <a
