@@ -34,6 +34,7 @@ export async function runResearchPipeline(
   // Tavily: sequential (Groq free tier rate limit: 6000 tokens/min)
   onProgress?.("discovery", `Researching casinos with ${provider.name}...`, 10);
 
+  const callsPerState = providerType === "exa" ? 2 : 1; // Exa does 2 calls per state (casinos + offers)
   const existingOffersPromise = fetchExistingOffers();
 
   type StateResult = { state: typeof STATES[number] } & Awaited<ReturnType<typeof provider.researchState>>;
@@ -45,7 +46,7 @@ export async function runResearchPipeline(
     for (let i = 0; i < STATES.length; i++) {
       const state = STATES[i];
       const result = await provider.researchState(state);
-      searchQueries++;
+      searchQueries += callsPerState;
       totalCitations += result.citations.length;
       stateResults.push({ state, ...result });
       const pct = 10 + Math.round(((i + 1) / STATES.length) * 40);
@@ -56,7 +57,7 @@ export async function runResearchPipeline(
     stateResults = await Promise.all(
       STATES.map(async (state, i) => {
         const result = await provider.researchState(state);
-        searchQueries++;
+        searchQueries += callsPerState;
         totalCitations += result.citations.length;
         const pct = 10 + Math.round(((i + 1) / STATES.length) * 40);
         onProgress?.("discovery", `Completed ${state.code} (${result.casinos.length} casinos)`, pct);
@@ -106,8 +107,10 @@ export async function runResearchPipeline(
     const result = matchCasinos(existingOffers, discoveredCasinos, state.code);
     allMissing.push(...result.missing);
     allMatched.push(...result.matched);
+    console.log(`[PIPELINE][${state.code}] Match results: ${result.matched.length} matched, ${result.missing.length} missing`);
   }
 
+  console.log(`[PIPELINE] Total: ${allMatched.length} matched casinos, ${allMissing.length} missing casinos`);
   onProgress?.("analysis", "Comparing offers...", 70);
 
   // Stage 3: Programmatic comparison first, collect ambiguous cases
@@ -150,6 +153,13 @@ export async function runResearchPipeline(
     }
   }
 
+  // Log comparison breakdown
+  const verdictCounts: Record<string, number> = {};
+  for (const c of comparisons) {
+    verdictCounts[c.verdict] = (verdictCounts[c.verdict] ?? 0) + 1;
+  }
+  console.log(`[PIPELINE] Programmatic verdicts: ${JSON.stringify(verdictCounts)}, ${ambiguousCases.length} ambiguous → LLM`);
+
   // Stage 4: Batch LLM call for ambiguous cases only (0 or 1 call)
   if (ambiguousCases.length > 0) {
     onProgress?.(
@@ -158,7 +168,10 @@ export async function runResearchPipeline(
       80
     );
 
+    console.log(`[PIPELINE] LLM batch: sending ${ambiguousCases.length} cases (reasons: ${ambiguousCases.map(c => c.reason).join(", ")})`);
+    const llmStartMs = Date.now();
     const llmVerdicts = await batchLlmComparison(ambiguousCases);
+    console.log(`[PIPELINE] LLM batch completed in ${Date.now() - llmStartMs}ms — ${llmVerdicts.filter(v => v !== null).length}/${ambiguousCases.length} resolved`);
     llmQueries++;
 
     for (let i = 0; i < ambiguousCases.length; i++) {
@@ -204,6 +217,12 @@ export async function runResearchPipeline(
   };
 
   await saveReport(report);
+
+  const totalSec = ((Date.now() - startTime) / 1000).toFixed(1);
+  console.log(`[PIPELINE] ===== COMPLETE =====`);
+  console.log(`[PIPELINE] Duration: ${totalSec}s | Searches: ${searchQueries} | LLM calls: ${llmQueries + (providerType === "tavily" ? searchQueries : 0)} | Citations: ${totalCitations}`);
+  console.log(`[PIPELINE] Missing casinos: ${allMissing.length} | Comparisons: ${comparisons.length} | Better offers: ${comparisons.filter(c => c.verdict === "discovered_better").length}`);
+
   onProgress?.("complete", "Research complete!", 100);
 
   return report;

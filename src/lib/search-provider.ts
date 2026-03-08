@@ -31,10 +31,8 @@ export interface SearchProvider {
   researchState(state: StateConfig): Promise<ProviderResult>;
 }
 
-// Combined schema — returned by all providers.
-// Uses single types + optional fields to be compatible across Exa Deep, Perplexity strict, and Groq.
-// Nullable fields (deposit_required, bonus_amount, etc.) are NOT in `required` — providers omit if unknown.
-const CASINO_OUTPUT_SCHEMA = {
+// Full nested schema — used by Perplexity and Tavily+Groq (no depth limits)
+const CASINO_FULL_SCHEMA = {
   type: "object" as const,
   properties: {
     casinos: {
@@ -69,8 +67,52 @@ const CASINO_OUTPUT_SCHEMA = {
   required: ["casinos"],
 };
 
+// Flat schemas for Exa Deep (max depth 2, max 10 properties)
+const EXA_CASINO_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    casinos: {
+      type: "array" as const,
+      items: {
+        type: "object" as const,
+        properties: {
+          name: { type: "string" as const, description: "Casino brand name" },
+          operator: { type: "string" as const, description: "Parent company" },
+          website: { type: "string" as const, description: "Official website URL" },
+          license_status: { type: "string" as const, description: "License status (active, pending, etc)" },
+        },
+        required: ["name", "operator", "website", "license_status"],
+      },
+    },
+  },
+  required: ["casinos"],
+};
+
+const EXA_OFFERS_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    offers: {
+      type: "array" as const,
+      items: {
+        type: "object" as const,
+        properties: {
+          casino_name: { type: "string" as const, description: "Casino brand name this offer belongs to" },
+          type: { type: "string" as const, description: "Offer type: deposit_match, no_deposit_bonus, free_play, or cashback" },
+          description: { type: "string" as const, description: "Full description of the promotional offer" },
+          deposit_required: { type: "number" as const, description: "Minimum deposit in dollars" },
+          bonus_amount: { type: "number" as const, description: "Bonus amount in dollars" },
+          wagering_requirement: { type: "string" as const, description: "Wagering requirement (e.g. 15x)" },
+          promo_code: { type: "string" as const, description: "Promo code if needed" },
+        },
+        required: ["casino_name", "type", "description"],
+      },
+    },
+  },
+  required: ["offers"],
+};
+
 function buildStateQuery(state: StateConfig): string {
-  return `List ALL currently licensed and operational online casinos in ${state.name} (regulated by ${state.gaming_commission}). For each casino, include: brand name, parent operator, website, license status, and ALL current new-player promotional offers (welcome bonuses, deposit matches, free play, no-deposit bonuses). Only include online casino operators (not sportsbook-only). Only include casino promotions, NOT sportsbook offers.`;
+  return `List ALL currently licensed and operational online casinos in ${state.name}. Prioritize official sources: the ${state.gaming_commission} regulatory database and state gaming commission records. For each casino, include: brand name, parent operator, official website, license status, and ALL current new-player promotional CASINO offers (welcome bonuses, deposit matches, free play, no-deposit bonuses). Do NOT include sportsbook-only operators or sportsbook promotions — only online casino games.`;
 }
 
 /** Retry a fetch call with exponential backoff on 429/5xx */
@@ -125,9 +167,45 @@ function parseCasinos(raw: unknown): CasinoWithOffers[] {
 }
 
 // --- Exa Deep Provider ---
-// Exa Deep returns structured output via outputSchema.
-// We do NOT restrict includeDomains — gaming commission sites have licensee lists
-// but not promotional offers. Exa Deep searches broadly and synthesizes.
+// Exa Deep has strict schema limits: max depth 2, max 10 properties.
+// So we use two calls per state: one for casino discovery, one for offers.
+// Both run in parallel. Still only 2 calls per state (8 total for 4 states).
+
+async function exaDeepSearch(apiKey: string, query: string, schema: Record<string, unknown>, label: string): Promise<{ output: unknown; citations: string[]; elapsed: number }> {
+  const startMs = Date.now();
+  const response = await fetchWithRetry("https://api.exa.ai/search", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+    },
+    body: JSON.stringify({
+      query,
+      type: "deep",
+      numResults: 20,
+      outputSchema: schema,
+      contents: { text: { maxCharacters: 3000 } },
+    }),
+  });
+
+  const elapsed = Date.now() - startMs;
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Exa API error ${response.status}: ${errorText}`);
+  }
+
+  const data = await response.json();
+  const citations: string[] = (data.results ?? []).map((r: { url: string }) => r.url);
+  console.log(`[Exa][${label}] API responded in ${elapsed}ms — ${citations.length} citations, keys: ${Object.keys(data).join(", ")}`);
+
+  const output = data.output?.content ?? data.output ?? data.synthesized;
+  if (!output) {
+    console.warn(`[Exa][${label}] No structured output. output field: ${JSON.stringify(data.output)?.substring(0, 500)}`);
+  }
+
+  return { output, citations, elapsed };
+}
 
 function createExaProvider(): SearchProvider {
   return {
@@ -136,53 +214,91 @@ function createExaProvider(): SearchProvider {
       const apiKey = process.env.EXA_API_KEY;
       if (!apiKey) throw new Error("EXA_API_KEY not set");
 
-      const query = buildStateQuery(state);
-      console.log(`[Exa][${state.code}] Searching: "${query.substring(0, 80)}..."`);
+      console.log(`[Exa][${state.code}] Starting parallel search (casinos + offers)...`);
 
-      const response = await fetchWithRetry("https://api.exa.ai/search", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": apiKey,
-        },
-        body: JSON.stringify({
-          query,
-          type: "deep",
-          numResults: 20,
-          outputSchema: CASINO_OUTPUT_SCHEMA,
-          // No includeDomains — we need both regulatory AND promotional sources
-          contents: {
-            text: { maxCharacters: 3000 },
-          },
-        }),
-      });
+      // Two parallel calls: casino discovery + offer research
+      const [casinoResult, offerResult] = await Promise.all([
+        exaDeepSearch(
+          apiKey,
+          `All licensed online casino operators in ${state.name}, regulated by ${state.gaming_commission}. Include brand name, parent company, website, and license status. Only online casino operators, not sportsbook-only.`,
+          EXA_CASINO_SCHEMA,
+          `${state.code}/casinos`
+        ),
+        exaDeepSearch(
+          apiKey,
+          `Current new player promotional offers and welcome bonuses for online casinos in ${state.name}. Include deposit match bonuses, no-deposit bonuses, free play offers. Only casino promotions, NOT sportsbook. Include bonus amounts, deposit requirements, wagering requirements, and promo codes.`,
+          EXA_OFFERS_SCHEMA,
+          `${state.code}/offers`
+        ),
+      ]);
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Exa API error ${response.status}: ${errorText}`);
-      }
+      const allCitations = [...new Set([...casinoResult.citations, ...offerResult.citations])];
 
-      const data = await response.json();
-      const citations: string[] = (data.results ?? []).map(
-        (r: { url: string }) => r.url
-      );
-
-      // Exa Deep structured output — try multiple response shapes
-      const output = data.output?.content ?? data.output ?? data.synthesized;
-      if (!output) {
-        console.warn(`[Exa][${state.code}] No structured output. Response keys: ${Object.keys(data).join(", ")}`);
-        return { casinos: [], citations };
-      }
-
+      // Parse casinos
+      let casinos: CasinoWithOffers[] = [];
       try {
-        const parsed = typeof output === "string" ? JSON.parse(output) : output;
-        const casinos = parseCasinos(parsed);
-        console.log(`[Exa][${state.code}] Found ${casinos.length} casinos, ${casinos.reduce((sum, c) => sum + c.offers.length, 0)} total offers`);
-        return { casinos, citations };
+        const casinoParsed = typeof casinoResult.output === "string" ? JSON.parse(casinoResult.output) : casinoResult.output;
+        const rawCasinos = casinoParsed?.casinos ?? [];
+        casinos = rawCasinos.map((c: Record<string, string>) => ({
+          name: String(c.name ?? ""),
+          operator: String(c.operator ?? ""),
+          website: String(c.website ?? ""),
+          license_status: String(c.license_status ?? ""),
+          offers: [] as CasinoWithOffers["offers"],
+        }));
+        console.log(`[Exa][${state.code}] Parsed ${casinos.length} casinos`);
       } catch (err) {
-        console.error(`[Exa][${state.code}] Failed to parse structured output:`, err);
-        return { casinos: [], citations };
+        console.error(`[Exa][${state.code}] Failed to parse casinos:`, err);
+        console.error(`[Exa][${state.code}] Raw: ${String(casinoResult.output).substring(0, 500)}`);
       }
+
+      // Parse offers and attach to casinos by name
+      try {
+        const offerParsed = typeof offerResult.output === "string" ? JSON.parse(offerResult.output) : offerResult.output;
+        const rawOffers = offerParsed?.offers ?? [];
+        console.log(`[Exa][${state.code}] Parsed ${rawOffers.length} offers`);
+
+        for (const o of rawOffers) {
+          const offerCasinoName = String(o.casino_name ?? "").toLowerCase();
+          // Find matching casino (fuzzy: includes check)
+          const match = casinos.find(c =>
+            c.name.toLowerCase() === offerCasinoName ||
+            offerCasinoName.includes(c.name.toLowerCase()) ||
+            c.name.toLowerCase().includes(offerCasinoName)
+          );
+          const offer = {
+            type: String(o.type ?? ""),
+            description: String(o.description ?? ""),
+            deposit_required: typeof o.deposit_required === "number" ? o.deposit_required : null,
+            bonus_amount: typeof o.bonus_amount === "number" ? o.bonus_amount : null,
+            wagering_requirement: o.wagering_requirement != null ? String(o.wagering_requirement) : null,
+            promo_code: o.promo_code != null ? String(o.promo_code) : null,
+          };
+          if (match) {
+            match.offers.push(offer);
+          } else if (offerCasinoName) {
+            // Casino from offers not in discovery — add it
+            casinos.push({
+              name: String(o.casino_name ?? ""),
+              operator: "",
+              website: "",
+              license_status: "unknown",
+              offers: [offer],
+            });
+          }
+        }
+      } catch (err) {
+        console.error(`[Exa][${state.code}] Failed to parse offers:`, err);
+        console.error(`[Exa][${state.code}] Raw: ${String(offerResult.output).substring(0, 500)}`);
+      }
+
+      const offerCount = casinos.reduce((sum, c) => sum + c.offers.length, 0);
+      console.log(`[Exa][${state.code}] Final: ${casinos.length} casinos, ${offerCount} offers`);
+      if (casinos.length > 0) {
+        console.log(`[Exa][${state.code}] Sample: ${casinos.slice(0, 3).map(c => `${c.name} (${c.offers.length} offers)`).join(", ")}`);
+      }
+
+      return { casinos, citations: allCitations };
     },
   };
 }
@@ -260,7 +376,7 @@ function createTavilyProvider(): SearchProvider {
             },
             {
               role: "user",
-              content: `Based on the following search results, ${buildStateQuery(state)}\n${answerSection}Search results:\n${searchContext}\n\nRespond with JSON matching this schema:\n${JSON.stringify(CASINO_OUTPUT_SCHEMA, null, 2)}`,
+              content: `Based on the following search results, ${buildStateQuery(state)}\n${answerSection}Search results:\n${searchContext}\n\nRespond with JSON matching this schema:\n${JSON.stringify(CASINO_FULL_SCHEMA, null, 2)}`,
             },
           ],
           response_format: { type: "json_object" },
@@ -322,7 +438,7 @@ function createPerplexityProvider(): SearchProvider {
             type: "json_schema",
             json_schema: {
               name: "casino_research",
-              schema: CASINO_OUTPUT_SCHEMA,
+              schema: CASINO_FULL_SCHEMA,
               strict: true,
             },
           },
