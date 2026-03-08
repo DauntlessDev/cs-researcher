@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 
 type Provider = { name: "exa" | "perplexity" | "tavily"; available: boolean };
@@ -26,7 +26,13 @@ export default function RunButton() {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [selectedProvider, setSelectedProvider] = useState<string>("exa");
   const logsEndRef = useRef<HTMLDivElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const router = useRouter();
+
+  // Cleanup in-flight request on unmount
+  useEffect(() => {
+    return () => { abortControllerRef.current?.abort(); };
+  }, []);
 
   useEffect(() => {
     fetch("/api/providers")
@@ -50,17 +56,21 @@ export default function RunButton() {
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs]);
 
-  async function handleRun() {
+  const handleRun = useCallback(async () => {
     setRunning(true);
     setLogs([]);
     setResult(null);
     setError(null);
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
     try {
       const res = await fetch("/api/research/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ provider: selectedProvider, stream: true }),
+        signal: controller.signal,
       });
 
       if (!res.ok || !res.body) {
@@ -112,11 +122,13 @@ export default function RunButton() {
         }
       }
     } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Request failed");
     } finally {
+      abortControllerRef.current = null;
       setRunning(false);
     }
-  }
+  }, [selectedProvider, router]);
 
   const latestLog = logs[logs.length - 1];
   const percent = latestLog?.percent ?? 0;
@@ -125,6 +137,7 @@ export default function RunButton() {
     <div className="space-y-3">
       <div className="flex items-center gap-3">
         <select
+          aria-label="Select search provider"
           value={selectedProvider}
           onChange={(e) => setSelectedProvider(e.target.value)}
           disabled={running}
@@ -143,7 +156,7 @@ export default function RunButton() {
         >
           {running ? (
             <span className="flex items-center gap-2">
-              <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+              <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
               </svg>
@@ -157,7 +170,14 @@ export default function RunButton() {
 
       {/* Progress bar */}
       {running && (
-        <div className="w-full bg-dark-700 rounded-full h-1.5">
+        <div
+          role="progressbar"
+          aria-valuenow={percent}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label="Research progress"
+          className="w-full bg-dark-700 rounded-full h-1.5"
+        >
           <div
             className="bg-accent h-1.5 rounded-full transition-all duration-500"
             style={{ width: `${percent}%` }}
@@ -167,9 +187,9 @@ export default function RunButton() {
 
       {/* Live logs */}
       {logs.length > 0 && (
-        <div className="bg-dark-800 rounded-lg p-3 max-h-48 overflow-y-auto font-mono text-xs border border-dark-700">
-          {logs.map((log, i) => (
-            <div key={i} className="text-gray-400 leading-relaxed">
+        <div aria-live="polite" className="bg-dark-800 rounded-lg p-3 max-h-48 overflow-y-auto font-mono text-xs border border-dark-700">
+          {logs.map((log) => (
+            <div key={`${log.timestamp}-${log.stage}-${log.percent}`} className="text-gray-400 leading-relaxed">
               <span className="text-dark-600">[{log.percent}%]</span>{" "}
               <span className="text-accent">{log.stage}</span>{" "}
               <span className="text-gray-400">{log.detail}</span>

@@ -38,17 +38,17 @@ export default function MissingCasinosTable({
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-gray-100">
-                    <th className="text-left px-4 py-2.5 font-medium text-gray-500 text-xs uppercase tracking-wider">Casino</th>
-                    <th className="text-left px-4 py-2.5 font-medium text-gray-500 text-xs uppercase tracking-wider">Operator</th>
-                    <th className="text-left px-4 py-2.5 font-medium text-gray-500 text-xs uppercase tracking-wider">Website</th>
-                    <th className="text-left px-4 py-2.5 font-medium text-gray-500 text-xs uppercase tracking-wider">License</th>
-                    <th className="text-left px-4 py-2.5 font-medium text-gray-500 text-xs uppercase tracking-wider">Source</th>
+                    <th scope="col" className="text-left px-4 py-2.5 font-medium text-gray-500 text-xs uppercase tracking-wider">Casino</th>
+                    <th scope="col" className="text-left px-4 py-2.5 font-medium text-gray-500 text-xs uppercase tracking-wider">Operator</th>
+                    <th scope="col" className="text-left px-4 py-2.5 font-medium text-gray-500 text-xs uppercase tracking-wider">Website</th>
+                    <th scope="col" className="text-left px-4 py-2.5 font-medium text-gray-500 text-xs uppercase tracking-wider">License</th>
+                    <th scope="col" className="text-left px-4 py-2.5 font-medium text-gray-500 text-xs uppercase tracking-wider">Source</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {stateCasinos.map((casino, i) => (
+                  {stateCasinos.map((casino) => (
                     <tr
-                      key={i}
+                      key={`${casino.name}-${casino.state}`}
                       className="border-b border-gray-50 last:border-0 hover:bg-gray-50/50 transition-colors"
                     >
                       <td className="px-4 py-3 font-medium text-gray-800">{casino.name}</td>

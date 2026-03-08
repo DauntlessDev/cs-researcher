@@ -1,56 +1,56 @@
-import { OfferComparison, DiscoveredCasino } from "@/types";
+"use client";
+
+import { useMemo } from "react";
+import { OfferComparison, DiscoveredCasino, STATES } from "@/types";
 
 interface Props {
   comparisons: OfferComparison[];
   missingCasinos: DiscoveredCasino[];
 }
 
-const STATES = ["NJ", "MI", "PA", "WV"];
-
 export default function CrossStateTable({ comparisons, missingCasinos }: Props) {
-  // Build a map of casino -> state -> best offer amount
-  const casinoMap = new Map<
-    string,
-    Map<string, { amount: number | null; description: string; type: string }>
-  >();
+  const sortedCasinos = useMemo(() => {
+    const casinoMap = new Map<
+      string,
+      Map<string, { amount: number | null; description: string; type: string }>
+    >();
 
-  for (const comp of comparisons) {
-    const name = comp.casino_name;
-    if (!casinoMap.has(name)) casinoMap.set(name, new Map());
-    const stateMap = casinoMap.get(name)!;
+    for (const comp of comparisons) {
+      const name = comp.casino_name;
+      if (!casinoMap.has(name)) casinoMap.set(name, new Map());
+      const stateMap = casinoMap.get(name)!;
 
-    const bestOffer = comp.discovered_offers.reduce(
-      (best, o) => {
-        if (o.bonus_amount != null && (best.amount == null || o.bonus_amount > best.amount)) {
-          return { amount: o.bonus_amount, description: o.description, type: o.type };
-        }
-        return best;
-      },
-      { amount: null as number | null, description: "", type: "" }
-    );
+      const bestOffer = comp.discovered_offers.reduce(
+        (best, o) => {
+          if (o.bonus_amount != null && (best.amount == null || o.bonus_amount > best.amount)) {
+            return { amount: o.bonus_amount, description: o.description, type: o.type };
+          }
+          return best;
+        },
+        { amount: null as number | null, description: "", type: "" }
+      );
 
-    // Use existing offer if no discovered offer has a bonus amount
-    if (bestOffer.amount == null && comp.existing_offer) {
-      stateMap.set(comp.state, {
-        amount: comp.existing_offer.Expected_Bonus,
-        description: comp.existing_offer.Offer_Name,
-        type: comp.existing_offer.offer_type,
-      });
-    } else {
-      stateMap.set(comp.state, bestOffer);
+      if (bestOffer.amount == null && comp.existing_offer) {
+        stateMap.set(comp.state, {
+          amount: comp.existing_offer.Expected_Bonus,
+          description: comp.existing_offer.Offer_Name,
+          type: comp.existing_offer.offer_type,
+        });
+      } else {
+        stateMap.set(comp.state, bestOffer);
+      }
     }
-  }
 
-  // Add missing casinos with no offer data
-  for (const casino of missingCasinos) {
-    if (!casinoMap.has(casino.name)) casinoMap.set(casino.name, new Map());
-    const stateMap = casinoMap.get(casino.name)!;
-    if (!stateMap.has(casino.state)) {
-      stateMap.set(casino.state, { amount: null, description: "Not tracked", type: "" });
+    for (const casino of missingCasinos) {
+      if (!casinoMap.has(casino.name)) casinoMap.set(casino.name, new Map());
+      const stateMap = casinoMap.get(casino.name)!;
+      if (!stateMap.has(casino.state)) {
+        stateMap.set(casino.state, { amount: null, description: "Not tracked", type: "" });
+      }
     }
-  }
 
-  const sortedCasinos = [...casinoMap.entries()].sort(([a], [b]) => a.localeCompare(b));
+    return [...casinoMap.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [comparisons, missingCasinos]);
 
   if (sortedCasinos.length === 0) {
     return (
@@ -75,10 +75,10 @@ export default function CrossStateTable({ comparisons, missingCasinos }: Props) 
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-gray-50 border-b border-gray-100">
-              <th className="text-left px-4 py-3 font-medium text-gray-500 text-xs uppercase tracking-wider">Casino</th>
+              <th scope="col" className="text-left px-4 py-3 font-medium text-gray-500 text-xs uppercase tracking-wider">Casino</th>
               {STATES.map((s) => (
-                <th key={s} className="text-center px-4 py-3 font-medium text-gray-500 text-xs uppercase tracking-wider">
-                  {s}
+                <th key={s.code} scope="col" className="text-center px-4 py-3 font-medium text-gray-500 text-xs uppercase tracking-wider">
+                  {s.code}
                 </th>
               ))}
             </tr>
@@ -89,7 +89,7 @@ export default function CrossStateTable({ comparisons, missingCasinos }: Props) 
               return (
                 <tr key={name} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/50 transition-colors">
                   <td className="px-4 py-3 font-medium text-gray-800">{name}</td>
-                  {STATES.map((state) => {
+                  {STATES.map(({ code: state }) => {
                     const data = stateMap.get(state);
                     if (!data || data.amount == null) {
                       return (

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { ResearchReport } from "@/types";
 import ExecutiveSummary from "./ExecutiveSummary";
 import MissingCasinosTable from "./MissingCasinosTable";
@@ -19,17 +19,23 @@ export default function ReportDashboard({ report }: { report: ResearchReport }) 
   const [stateFilter, setStateFilter] = useState<string>("all");
   const [verdictFilter, setVerdictFilter] = useState<string>("all");
 
-  const filteredComparisons = report.comparisons
-    .filter((c) => stateFilter === "all" || c.state === stateFilter)
-    .filter((c) => verdictFilter === "all" || c.verdict === verdictFilter)
-    .sort((a, b) => VERDICT_ORDER[a.verdict] - VERDICT_ORDER[b.verdict]);
-
-  const filteredMissing = report.missing_casinos.filter(
-    (c) => stateFilter === "all" || c.state === stateFilter
+  const filteredComparisons = useMemo(() =>
+    report.comparisons
+      .filter((c) => stateFilter === "all" || c.state === stateFilter)
+      .filter((c) => verdictFilter === "all" || c.verdict === verdictFilter)
+      .sort((a, b) => VERDICT_ORDER[a.verdict] - VERDICT_ORDER[b.verdict]),
+    [report.comparisons, stateFilter, verdictFilter]
   );
 
-  const states = [...new Set(report.comparisons.map((c) => c.state))].sort();
-  const verdicts = [...new Set(report.comparisons.map((c) => c.verdict))];
+  const filteredMissing = useMemo(() =>
+    report.missing_casinos.filter(
+      (c) => stateFilter === "all" || c.state === stateFilter
+    ),
+    [report.missing_casinos, stateFilter]
+  );
+
+  const states = useMemo(() => [...new Set(report.comparisons.map((c) => c.state))].sort(), [report.comparisons]);
+  const verdicts = useMemo(() => [...new Set(report.comparisons.map((c) => c.verdict))], [report.comparisons]);
 
   return (
     <div className="space-y-8">
@@ -44,8 +50,9 @@ export default function ReportDashboard({ report }: { report: ResearchReport }) 
 
       {/* Filters */}
       <section className="flex flex-wrap gap-3 items-center bg-white rounded-xl border border-gray-100 p-4 shadow-sm">
-        <span className="text-sm font-medium text-gray-500">Filters</span>
+        <span className="text-sm font-medium text-gray-500" id="filters-label">Filters</span>
         <select
+          aria-label="Filter by state"
           value={stateFilter}
           onChange={(e) => setStateFilter(e.target.value)}
           className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-gray-50 cursor-pointer focus:outline-none focus:ring-2 focus:ring-accent"
@@ -56,6 +63,7 @@ export default function ReportDashboard({ report }: { report: ResearchReport }) 
           ))}
         </select>
         <select
+          aria-label="Filter by verdict"
           value={verdictFilter}
           onChange={(e) => setVerdictFilter(e.target.value)}
           className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-gray-50 cursor-pointer focus:outline-none focus:ring-2 focus:ring-accent"
@@ -106,8 +114,8 @@ export default function ReportDashboard({ report }: { report: ResearchReport }) 
           Offer Comparisons ({filteredComparisons.length})
         </h2>
         <div className="space-y-3">
-          {filteredComparisons.map((comparison, i) => (
-            <OfferComparisonCard key={i} comparison={comparison} />
+          {filteredComparisons.map((comparison) => (
+            <OfferComparisonCard key={`${comparison.casino_name}-${comparison.state}`} comparison={comparison} />
           ))}
           {filteredComparisons.length === 0 && (
             <div className="bg-white border border-gray-100 rounded-xl p-8 text-center text-gray-400 shadow-sm">

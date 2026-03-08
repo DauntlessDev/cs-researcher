@@ -27,7 +27,8 @@ export async function runResearchPipeline(
   let totalCitations = 0;
 
   const provider = createSearchProvider(providerType);
-  const reportId = `report-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+  const randomSuffix = Math.random().toString(36).substring(2, 8);
+  const reportId = `report-${new Date().toISOString().replace(/[:.]/g, "-")}-${randomSuffix}`;
 
   // Stage 1: Fetch existing offers + research all states
   // Exa/Perplexity: parallel (each call is self-contained)

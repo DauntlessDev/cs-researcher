@@ -129,7 +129,7 @@ async function fetchWithRetry(
     // Retry on 429 (rate limit) or 5xx (server error)
     if ((response.status === 429 || response.status >= 500) && attempt < maxRetries) {
       const retryAfter = response.headers.get("retry-after");
-      const waitMs = retryAfter ? parseInt(retryAfter) * 1000 : 3000 * (attempt + 1);
+      const waitMs = retryAfter ? parseInt(retryAfter) * 1000 : 3000 * Math.pow(2, attempt);
       console.warn(`[Retry] ${response.status} from ${url}, waiting ${waitMs}ms (attempt ${attempt + 1}/${maxRetries})`);
       await new Promise((resolve) => setTimeout(resolve, waitMs));
       continue;

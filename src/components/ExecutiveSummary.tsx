@@ -1,17 +1,14 @@
-import { ResearchReport } from "@/types";
+"use client";
 
-const STATES = ["NJ", "MI", "PA", "WV"];
+import { useMemo } from "react";
+import { ResearchReport, STATES } from "@/types";
 
 export default function ExecutiveSummary({ report }: { report: ResearchReport }) {
-  const betterOffers = report.comparisons.filter(
-    (c) => c.verdict === "discovered_better"
-  ).length;
-  const comparableOffers = report.comparisons.filter(
-    (c) => c.verdict === "comparable"
-  ).length;
-  const existingBetter = report.comparisons.filter(
-    (c) => c.verdict === "existing_better"
-  ).length;
+  const { betterOffers, comparableOffers, existingBetter } = useMemo(() => ({
+    betterOffers: report.comparisons.filter((c) => c.verdict === "discovered_better").length,
+    comparableOffers: report.comparisons.filter((c) => c.verdict === "comparable").length,
+    existingBetter: report.comparisons.filter((c) => c.verdict === "existing_better").length,
+  }), [report.comparisons]);
 
   const stats = [
     {
@@ -78,14 +75,15 @@ export default function ExecutiveSummary({ report }: { report: ResearchReport })
   ];
 
   // Per-state breakdown
-  const stateStats = STATES.map((state) => {
+  const stateStats = useMemo(() => STATES.map((s) => {
+    const state = s.code;
     const missing = report.missing_casinos.filter((c) => c.state === state).length;
     const better = report.comparisons.filter(
       (c) => c.state === state && c.verdict === "discovered_better"
     ).length;
     const total = report.comparisons.filter((c) => c.state === state).length;
     return { state, missing, better, total };
-  });
+  }), [report.missing_casinos, report.comparisons]);
 
   return (
     <div className="space-y-4">

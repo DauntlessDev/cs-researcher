@@ -35,7 +35,9 @@ function isSameCasino(a: string, b: string): boolean {
   const nb = normalize(b);
   if (!na || !nb) return false;
   if (na === nb) return true;
-  if (na.includes(nb) || nb.includes(na)) return true;
+  // Require minimum 3 chars for substring match to avoid false positives (e.g. "bet" matching "betmgm")
+  const minLen = Math.min(na.length, nb.length);
+  if (minLen >= 3 && (na.includes(nb) || nb.includes(na))) return true;
   if (levenshtein(na, nb) <= 2) return true;
   return false;
 }

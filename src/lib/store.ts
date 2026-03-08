@@ -12,7 +12,10 @@ async function ensureDir() {
 }
 
 function sanitizeId(id: string): string {
-  return id.replace(/[^a-zA-Z0-9\-_]/g, "");
+  // Allowlist: only alphanumeric, hyphens, underscores (blocks encoded traversal like %2e%2f)
+  const sanitized = id.replace(/[^a-zA-Z0-9\-_]/g, "");
+  if (!sanitized) throw new Error("Invalid report ID");
+  return sanitized;
 }
 
 export async function saveReport(report: ResearchReport): Promise<void> {
@@ -26,7 +29,8 @@ export async function getReport(id: string): Promise<ResearchReport | null> {
     const filePath = path.join(DATA_DIR, `${sanitizeId(id)}.json`);
     const data = await fs.readFile(filePath, "utf-8");
     return JSON.parse(data) as ResearchReport;
-  } catch {
+  } catch (err) {
+    console.error(`[STORE] Failed to read report "${id}":`, err);
     return null;
   }
 }
@@ -42,7 +46,8 @@ export async function getLatestReport(): Promise<ResearchReport | null> {
     if (jsonFiles.length === 0) return null;
     const data = await fs.readFile(path.join(DATA_DIR, jsonFiles[0]), "utf-8");
     return JSON.parse(data) as ResearchReport;
-  } catch {
+  } catch (err) {
+    console.error("[STORE] Failed to get latest report:", err);
     return null;
   }
 }

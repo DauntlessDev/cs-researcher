@@ -1,6 +1,7 @@
 import { XanoOffer } from "@/types";
 
 const XANO_ENDPOINT =
+  process.env.XANO_API_URL ??
   "https://xhks-nxia-vlqr.n7c.xano.io/api:1ZwRS-f0/activeSUB";
 
 export async function fetchExistingOffers(): Promise<XanoOffer[]> {

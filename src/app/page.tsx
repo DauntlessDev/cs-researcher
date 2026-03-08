@@ -12,7 +12,7 @@ export default async function Home() {
       {/* Dark hero header */}
       <div className="bg-dark-900 text-white">
         <div className="max-w-6xl mx-auto px-6 py-10">
-          <div className="flex items-start justify-between">
+          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
             <div>
               <h1 className="text-3xl font-bold tracking-tight">
                 Casino & Offer
