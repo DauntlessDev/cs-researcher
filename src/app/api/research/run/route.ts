@@ -13,22 +13,73 @@ export async function POST(request: NextRequest) {
       ? (body.provider as SearchProviderType)
       : "exa";
 
-    const report = await runResearchPipeline((stage, detail, percent) => {
-      console.log(`[${percent}%] ${stage}: ${detail}`);
-    }, provider);
+    const stream = body.stream === true;
 
-    return NextResponse.json({
-      success: true,
-      reportId: report.id,
-      provider,
-      summary: {
-        missing_casinos: report.missing_casinos.length,
-        comparisons: report.comparisons.length,
-        better_offers_found: report.comparisons.filter(
-          (c) => c.verdict === "discovered_better"
-        ).length,
-        duration_ms: report.metadata.duration_ms,
-        estimated_cost: report.metadata.estimated_cost,
+    if (!stream) {
+      // Non-streaming: return JSON when done (used by cron, etc.)
+      const report = await runResearchPipeline((stage, detail, percent) => {
+        console.log(`[${percent}%] ${stage}: ${detail}`);
+      }, provider);
+
+      return NextResponse.json({
+        success: true,
+        reportId: report.id,
+        provider,
+        summary: {
+          missing_casinos: report.missing_casinos.length,
+          comparisons: report.comparisons.length,
+          better_offers_found: report.comparisons.filter(
+            (c) => c.verdict === "discovered_better"
+          ).length,
+          duration_ms: report.metadata.duration_ms,
+          estimated_cost: report.metadata.estimated_cost,
+        },
+      });
+    }
+
+    // Streaming: send progress events as newline-delimited JSON
+    const encoder = new TextEncoder();
+    const readable = new ReadableStream({
+      async start(controller) {
+        try {
+          const report = await runResearchPipeline((stage, detail, percent) => {
+            console.log(`[${percent}%] ${stage}: ${detail}`);
+            const event = JSON.stringify({ type: "progress", stage, detail, percent });
+            controller.enqueue(encoder.encode(event + "\n"));
+          }, provider);
+
+          const done = JSON.stringify({
+            type: "done",
+            success: true,
+            reportId: report.id,
+            provider,
+            summary: {
+              missing_casinos: report.missing_casinos.length,
+              comparisons: report.comparisons.length,
+              better_offers_found: report.comparisons.filter(
+                (c) => c.verdict === "discovered_better"
+              ).length,
+              duration_ms: report.metadata.duration_ms,
+            },
+          });
+          controller.enqueue(encoder.encode(done + "\n"));
+        } catch (error) {
+          const err = JSON.stringify({
+            type: "error",
+            error: error instanceof Error ? error.message : "Unknown error",
+          });
+          controller.enqueue(encoder.encode(err + "\n"));
+        } finally {
+          controller.close();
+        }
+      },
+    });
+
+    return new Response(readable, {
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Transfer-Encoding": "chunked",
+        "Cache-Control": "no-cache",
       },
     });
   } catch (error) {
