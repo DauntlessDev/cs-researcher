@@ -53,9 +53,10 @@ export async function runResearchPipeline(
       onProgress?.("discovery", `Completed ${state.code} (${result.casinos.length} casinos)`, pct);
     }
   } else {
-    // Parallel for Exa/Perplexity — no rate limit concerns
+    // Staggered parallel — offset each state by 600ms to respect Exa's 2 req/sec limit
     stateResults = await Promise.all(
       STATES.map(async (state, i) => {
+        if (i > 0) await new Promise((resolve) => setTimeout(resolve, i * 600));
         const result = await provider.researchState(state);
         searchQueries += callsPerState;
         totalCitations += result.citations.length;

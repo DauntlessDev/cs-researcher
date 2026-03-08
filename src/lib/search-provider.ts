@@ -214,23 +214,26 @@ function createExaProvider(): SearchProvider {
       const apiKey = process.env.EXA_API_KEY;
       if (!apiKey) throw new Error("EXA_API_KEY not set");
 
-      console.log(`[Exa][${state.code}] Starting parallel search (casinos + offers)...`);
+      console.log(`[Exa][${state.code}] Starting sequential search (casinos then offers, 2 req/s rate limit)...`);
 
-      // Two parallel calls: casino discovery + offer research
-      const [casinoResult, offerResult] = await Promise.all([
-        exaDeepSearch(
-          apiKey,
-          `All licensed online casino operators in ${state.name}, regulated by ${state.gaming_commission}. Include brand name, parent company, website, and license status. Only online casino operators, not sportsbook-only.`,
-          EXA_CASINO_SCHEMA,
-          `${state.code}/casinos`
-        ),
-        exaDeepSearch(
-          apiKey,
-          `Current new player promotional offers and welcome bonuses for online casinos in ${state.name}. Include deposit match bonuses, no-deposit bonuses, free play offers. Only casino promotions, NOT sportsbook. Include bonus amounts, deposit requirements, wagering requirements, and promo codes.`,
-          EXA_OFFERS_SCHEMA,
-          `${state.code}/offers`
-        ),
-      ]);
+      // Sequential calls to respect Exa's 2 req/sec rate limit
+      // (pipeline runs multiple states in parallel, so we serialize within each state)
+      const casinoResult = await exaDeepSearch(
+        apiKey,
+        `All licensed online casino operators in ${state.name}, regulated by ${state.gaming_commission}. Include brand name, parent company, website, and license status. Only online casino operators, not sportsbook-only.`,
+        EXA_CASINO_SCHEMA,
+        `${state.code}/casinos`
+      );
+
+      // Small delay to stay under rate limit when multiple states run concurrently
+      await new Promise((resolve) => setTimeout(resolve, 600));
+
+      const offerResult = await exaDeepSearch(
+        apiKey,
+        `Current new player promotional offers and welcome bonuses for online casinos in ${state.name}. Include deposit match bonuses, no-deposit bonuses, free play offers. Only casino promotions, NOT sportsbook. Include bonus amounts, deposit requirements, wagering requirements, and promo codes.`,
+        EXA_OFFERS_SCHEMA,
+        `${state.code}/offers`
+      );
 
       const allCitations = [...new Set([...casinoResult.citations, ...offerResult.citations])];
 
