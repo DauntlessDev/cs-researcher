@@ -98,7 +98,7 @@ export default function RunButton() {
               ]);
             } else if (event.type === "done") {
               setResult(
-                `Complete! Found ${event.summary.missing_casinos} missing casinos, ` +
+                `Found ${event.summary.missing_casinos} missing casinos, ` +
                   `${event.summary.better_offers_found} better offers. ` +
                   `Duration: ${Math.round(event.summary.duration_ms / 1000)}s.`
               );
@@ -128,7 +128,7 @@ export default function RunButton() {
           value={selectedProvider}
           onChange={(e) => setSelectedProvider(e.target.value)}
           disabled={running}
-          className="px-3 py-2.5 bg-white border border-gray-300 rounded-lg text-sm text-gray-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="px-3 py-2.5 bg-dark-700 border border-dark-600 rounded-lg text-sm text-gray-300 cursor-pointer focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {providers.map((p) => (
             <option key={p.name} value={p.name} disabled={!p.available}>
@@ -139,7 +139,7 @@ export default function RunButton() {
         <button
           onClick={handleRun}
           disabled={running || !providers.some((p) => p.name === selectedProvider && p.available)}
-          className="px-6 py-2.5 bg-blue-600 text-white rounded-lg font-medium cursor-pointer hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          className="px-6 py-2.5 bg-accent text-dark-900 rounded-lg font-semibold cursor-pointer hover:bg-accent-light disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           {running ? (
             <span className="flex items-center gap-2">
@@ -157,9 +157,9 @@ export default function RunButton() {
 
       {/* Progress bar */}
       {running && (
-        <div className="w-full bg-gray-200 rounded-full h-2">
+        <div className="w-full bg-dark-700 rounded-full h-1.5">
           <div
-            className="bg-blue-600 h-2 rounded-full transition-all duration-500"
+            className="bg-accent h-1.5 rounded-full transition-all duration-500"
             style={{ width: `${percent}%` }}
           />
         </div>
@@ -167,12 +167,12 @@ export default function RunButton() {
 
       {/* Live logs */}
       {logs.length > 0 && (
-        <div className="bg-gray-900 rounded-lg p-3 max-h-48 overflow-y-auto font-mono text-xs">
+        <div className="bg-dark-800 rounded-lg p-3 max-h-48 overflow-y-auto font-mono text-xs border border-dark-700">
           {logs.map((log, i) => (
-            <div key={i} className="text-gray-300 leading-relaxed">
-              <span className="text-gray-500">[{log.percent}%]</span>{" "}
-              <span className="text-blue-400">{log.stage}</span>{" "}
-              <span className="text-gray-300">{log.detail}</span>
+            <div key={i} className="text-gray-400 leading-relaxed">
+              <span className="text-dark-600">[{log.percent}%]</span>{" "}
+              <span className="text-accent">{log.stage}</span>{" "}
+              <span className="text-gray-400">{log.detail}</span>
             </div>
           ))}
           <div ref={logsEndRef} />
@@ -181,12 +181,12 @@ export default function RunButton() {
 
       {/* Result */}
       {result && !error && (
-        <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg p-3">
+        <div className="text-sm text-accent bg-accent/10 border border-accent/20 rounded-lg p-3">
           {result}
         </div>
       )}
       {error && (
-        <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-3">
+        <div className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg p-3">
           {error}
         </div>
       )}

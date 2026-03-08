@@ -490,10 +490,10 @@ export function createSearchProvider(type: SearchProviderType): SearchProvider {
 export function getAvailableProviders(): { name: SearchProviderType; available: boolean }[] {
   return [
     { name: "exa", available: !!process.env.EXA_API_KEY },
-    { name: "perplexity", available: !!process.env.PERPLEXITY_API_KEY },
     {
       name: "tavily",
       available: !!(process.env.TAVILY_API_KEY && process.env.GROQ_API_KEY),
     },
+    { name: "perplexity", available: !!process.env.PERPLEXITY_API_KEY },
   ];
 }

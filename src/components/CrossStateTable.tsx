@@ -54,7 +54,7 @@ export default function CrossStateTable({ comparisons, missingCasinos }: Props) 
 
   if (sortedCasinos.length === 0) {
     return (
-      <div className="bg-gray-50 border border-gray-200 rounded-lg p-6 text-center text-gray-500">
+      <div className="bg-white border border-gray-100 rounded-xl p-8 text-center text-gray-400 shadow-sm">
         No cross-state data available yet.
       </div>
     );
@@ -70,52 +70,56 @@ export default function CrossStateTable({ comparisons, missingCasinos }: Props) 
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm border-collapse">
-        <thead>
-          <tr className="bg-gray-50 border-b border-gray-200">
-            <th className="text-left p-3 font-medium text-gray-600">Casino</th>
-            {STATES.map((s) => (
-              <th key={s} className="text-center p-3 font-medium text-gray-600">
-                {s}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {sortedCasinos.map(([name, stateMap]) => {
-            const rowMax = getRowMax(stateMap);
-            return (
-              <tr key={name} className="border-b border-gray-100 hover:bg-gray-50">
-                <td className="p-3 font-medium text-gray-900">{name}</td>
-                {STATES.map((state) => {
-                  const data = stateMap.get(state);
-                  if (!data || data.amount == null) {
+    <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-gray-50 border-b border-gray-100">
+              <th className="text-left px-4 py-3 font-medium text-gray-500 text-xs uppercase tracking-wider">Casino</th>
+              {STATES.map((s) => (
+                <th key={s} className="text-center px-4 py-3 font-medium text-gray-500 text-xs uppercase tracking-wider">
+                  {s}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {sortedCasinos.map(([name, stateMap]) => {
+              const rowMax = getRowMax(stateMap);
+              return (
+                <tr key={name} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/50 transition-colors">
+                  <td className="px-4 py-3 font-medium text-gray-800">{name}</td>
+                  {STATES.map((state) => {
+                    const data = stateMap.get(state);
+                    if (!data || data.amount == null) {
+                      return (
+                        <td key={state} className="px-4 py-3 text-center text-gray-300">
+                          —
+                        </td>
+                      );
+                    }
+                    const isBest = rowMax != null && data.amount === rowMax && rowMax > 0;
                     return (
-                      <td key={state} className="p-3 text-center text-gray-300">
-                        -
+                      <td
+                        key={state}
+                        className={`px-4 py-3 text-center ${isBest ? "font-bold text-emerald-600" : "text-gray-600"}`}
+                        title={data.description}
+                      >
+                        <span className={isBest ? "px-2 py-0.5 bg-emerald-50 rounded-md" : ""}>
+                          ${data.amount.toLocaleString()}
+                        </span>
+                        {data.type && (
+                          <div className="text-xs text-gray-400 mt-0.5">{data.type}</div>
+                        )}
                       </td>
                     );
-                  }
-                  const isBest = rowMax != null && data.amount === rowMax && rowMax > 0;
-                  return (
-                    <td
-                      key={state}
-                      className={`p-3 text-center ${isBest ? "font-bold text-green-700 bg-green-50" : "text-gray-700"}`}
-                      title={data.description}
-                    >
-                      ${data.amount.toLocaleString()}
-                      {data.type && (
-                        <div className="text-xs text-gray-400">{data.type}</div>
-                      )}
-                    </td>
-                  );
-                })}
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                  })}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

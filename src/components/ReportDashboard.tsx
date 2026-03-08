@@ -35,17 +35,20 @@ export default function ReportDashboard({ report }: { report: ResearchReport }) 
     <div className="space-y-8">
       {/* Executive Summary */}
       <section>
-        <h2 className="text-xl font-semibold text-gray-800 mb-4">Overview</h2>
+        <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+          <span className="w-1 h-5 bg-accent rounded-full" />
+          Overview
+        </h2>
         <ExecutiveSummary report={report} />
       </section>
 
       {/* Filters */}
-      <section className="flex flex-wrap gap-3 items-center">
-        <span className="text-sm font-medium text-gray-600">Filter:</span>
+      <section className="flex flex-wrap gap-3 items-center bg-white rounded-xl border border-gray-100 p-4 shadow-sm">
+        <span className="text-sm font-medium text-gray-500">Filters</span>
         <select
           value={stateFilter}
           onChange={(e) => setStateFilter(e.target.value)}
-          className="text-sm border border-gray-300 rounded-lg px-3 py-1.5 bg-white"
+          className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-gray-50 cursor-pointer focus:outline-none focus:ring-2 focus:ring-accent"
         >
           <option value="all">All States</option>
           {states.map((s) => (
@@ -55,7 +58,7 @@ export default function ReportDashboard({ report }: { report: ResearchReport }) 
         <select
           value={verdictFilter}
           onChange={(e) => setVerdictFilter(e.target.value)}
-          className="text-sm border border-gray-300 rounded-lg px-3 py-1.5 bg-white"
+          className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-gray-50 cursor-pointer focus:outline-none focus:ring-2 focus:ring-accent"
         >
           <option value="all">All Verdicts</option>
           {verdicts.map((v) => (
@@ -67,7 +70,7 @@ export default function ReportDashboard({ report }: { report: ResearchReport }) 
         {(stateFilter !== "all" || verdictFilter !== "all") && (
           <button
             onClick={() => { setStateFilter("all"); setVerdictFilter("all"); }}
-            className="text-xs text-blue-600 hover:underline"
+            className="text-xs text-accent hover:text-accent-light font-medium cursor-pointer"
           >
             Clear filters
           </button>
@@ -76,7 +79,8 @@ export default function ReportDashboard({ report }: { report: ResearchReport }) 
 
       {/* Cross-State Comparison */}
       <section>
-        <h2 className="text-xl font-semibold text-gray-800 mb-4">
+        <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+          <span className="w-1 h-5 bg-accent rounded-full" />
           Cross-State Offer Comparison
         </h2>
         <CrossStateTable
@@ -87,7 +91,8 @@ export default function ReportDashboard({ report }: { report: ResearchReport }) 
 
       {/* Missing Casinos */}
       <section>
-        <h2 className="text-xl font-semibold text-gray-800 mb-4">
+        <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+          <span className="w-1 h-5 bg-red-500 rounded-full" />
           Missing Casinos
           {stateFilter !== "all" && ` (${stateFilter})`}
         </h2>
@@ -96,15 +101,16 @@ export default function ReportDashboard({ report }: { report: ResearchReport }) 
 
       {/* Offer Comparisons */}
       <section>
-        <h2 className="text-xl font-semibold text-gray-800 mb-4">
+        <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+          <span className="w-1 h-5 bg-amber-500 rounded-full" />
           Offer Comparisons ({filteredComparisons.length})
         </h2>
-        <div className="space-y-4">
+        <div className="space-y-3">
           {filteredComparisons.map((comparison, i) => (
             <OfferComparisonCard key={i} comparison={comparison} />
           ))}
           {filteredComparisons.length === 0 && (
-            <div className="bg-gray-50 border border-gray-200 rounded-lg p-6 text-center text-gray-500">
+            <div className="bg-white border border-gray-100 rounded-xl p-8 text-center text-gray-400 shadow-sm">
               No comparisons match the current filters.
             </div>
           )}
