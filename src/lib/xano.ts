@@ -9,7 +9,10 @@ export async function fetchExistingOffers(): Promise<XanoOffer[]> {
   if (!response.ok) {
     throw new Error(`Xano API error: ${response.status} ${response.statusText}`);
   }
-  const data = await response.json();
+  const data: unknown = await response.json();
+  if (!Array.isArray(data)) {
+    throw new Error(`Xano API returned non-array response: ${typeof data}`);
+  }
   return data as XanoOffer[];
 }
 

@@ -41,7 +41,7 @@ function calculateEV(
   const match = wagering.match(/(\d+)x/i);
   if (!match) return null;
   const multiplier = parseInt(match[1], 10);
-  if (multiplier <= 0) return null;
+  if (isNaN(multiplier) || multiplier <= 0) return null;
   return Math.round((bonusAmount / multiplier) * 100) / 100;
 }
 

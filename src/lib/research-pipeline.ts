@@ -89,6 +89,7 @@ export async function runResearchPipeline(
     }));
 
     for (const c of casinos) {
+      if (!c.name.trim()) continue;
       const key = `${c.name}|${state.code}`;
       offersByKey.set(
         key,
@@ -453,8 +454,13 @@ Respond with a JSON object:
     const parsed = JSON.parse(content);
     const results: (LlmVerdict | null)[] = [];
 
+    if (!Array.isArray(parsed.results)) {
+      console.error("[PIPELINE] LLM response missing results array:", JSON.stringify(parsed).substring(0, 200));
+      return cases.map(() => null);
+    }
+
     for (let i = 0; i < cases.length; i++) {
-      const r = parsed.results?.find((r: { case: number }) => r.case === i + 1);
+      const r = parsed.results.find((r: { case: number }) => r.case === i + 1);
       if (r && VALID_VERDICTS.has(r.verdict)) {
         results.push({
           verdict: r.verdict as LlmVerdict["verdict"],

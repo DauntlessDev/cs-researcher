@@ -78,7 +78,7 @@ export default function MissingCasinosTable({
                           try { hostname = new URL(url).hostname; } catch { /* use raw url */ }
                           return (
                             <a
-                              key={j}
+                              key={url}
                               href={url}
                               target="_blank"
                               rel="noopener noreferrer"

@@ -61,7 +61,7 @@ export default function CrossStateTable({ comparisons, missingCasinos }: Props) 
   }
 
   // Find the max offer per row to highlight
-  function getRowMax(stateMap: Map<string, { amount: number | null }>): number | null {
+  function getRowMax(stateMap: Map<string, { amount: number | null; description: string; type: string }>): number | null {
     let max: number | null = null;
     for (const v of stateMap.values()) {
       if (v.amount != null && (max == null || v.amount > max)) max = v.amount;

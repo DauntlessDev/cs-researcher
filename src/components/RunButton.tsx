@@ -116,8 +116,8 @@ export default function RunButton() {
             } else if (event.type === "error") {
               setError(event.error);
             }
-          } catch {
-            // skip malformed lines
+          } catch (err) {
+            if (!(err instanceof SyntaxError)) throw err;
           }
         }
       }
@@ -188,8 +188,8 @@ export default function RunButton() {
       {/* Live logs */}
       {logs.length > 0 && (
         <div aria-live="polite" className="bg-dark-800 rounded-lg p-3 max-h-48 overflow-y-auto font-mono text-xs border border-dark-700">
-          {logs.map((log) => (
-            <div key={`${log.timestamp}-${log.stage}-${log.percent}`} className="text-gray-400 leading-relaxed">
+          {logs.map((log, i) => (
+            <div key={i} className="text-gray-400 leading-relaxed">
               <span className="text-dark-600">[{log.percent}%]</span>{" "}
               <span className="text-accent">{log.stage}</span>{" "}
               <span className="text-gray-400">{log.detail}</span>

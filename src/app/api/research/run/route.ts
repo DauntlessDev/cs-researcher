@@ -77,7 +77,7 @@ export async function POST(request: NextRequest) {
 
     return new Response(readable, {
       headers: {
-        "Content-Type": "text/plain; charset=utf-8",
+        "Content-Type": "application/x-ndjson; charset=utf-8",
         "Transfer-Encoding": "chunked",
         "Cache-Control": "no-cache",
       },

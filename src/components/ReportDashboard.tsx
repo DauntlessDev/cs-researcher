@@ -23,7 +23,7 @@ export default function ReportDashboard({ report }: { report: ResearchReport }) 
     report.comparisons
       .filter((c) => stateFilter === "all" || c.state === stateFilter)
       .filter((c) => verdictFilter === "all" || c.verdict === verdictFilter)
-      .sort((a, b) => VERDICT_ORDER[a.verdict] - VERDICT_ORDER[b.verdict]),
+      .sort((a, b) => (VERDICT_ORDER[a.verdict] ?? 999) - (VERDICT_ORDER[b.verdict] ?? 999)),
     [report.comparisons, stateFilter, verdictFilter]
   );
 
