@@ -10,7 +10,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const report = await runResearchPipeline();
+    const report = await runResearchPipeline(undefined, "exa");
     return NextResponse.json({
       success: true,
       reportId: report.id,

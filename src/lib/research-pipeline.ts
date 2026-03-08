@@ -7,117 +7,132 @@ import {
   XanoOffer,
 } from "@/types";
 import { fetchExistingOffers } from "./xano";
-import { discoverCasinosExa } from "./exa";
-import { searchTavily, batchSearch } from "./tavily";
-import { extractStructuredData, analyzeOfferComparison } from "./llm";
 import { matchCasinos } from "./casino-matcher";
 import { saveReport } from "./store";
 import {
-  DISCOVERY_SYSTEM_PROMPT,
-  buildDiscoveryUserPrompt,
-  DISCOVERY_JSON_SCHEMA,
-} from "@/prompts/casino-discovery";
-import {
-  OFFER_RESEARCH_SYSTEM_PROMPT,
-  buildOfferResearchPrompt,
-  OFFER_RESEARCH_JSON_SCHEMA,
-} from "@/prompts/offer-research";
+  SearchProviderType,
+  CasinoWithOffers,
+  createSearchProvider,
+} from "./search-provider";
 
 type ProgressCallback = (stage: string, detail: string, percent: number) => void;
 
-interface PipelineCounters {
-  searchQueries: number;
-  llmQueries: number;
-  totalCitations: number;
-}
-
 export async function runResearchPipeline(
-  onProgress?: ProgressCallback
+  onProgress?: ProgressCallback,
+  providerType: SearchProviderType = "exa"
 ): Promise<ResearchReport> {
   const startTime = Date.now();
-  const counters: PipelineCounters = {
-    searchQueries: 0,
-    llmQueries: 0,
-    totalCitations: 0,
-  };
+  let searchQueries = 0;
+  let llmQueries = 0;
+  let totalCitations = 0;
 
+  const provider = createSearchProvider(providerType);
   const reportId = `report-${new Date().toISOString().replace(/[:.]/g, "-")}`;
 
-  // Stage 1: Fetch existing offers + discover casinos in parallel
-  onProgress?.("discovery", "Fetching existing offers and discovering casinos...", 10);
+  // Stage 1: Fetch existing offers + research all states
+  // Exa/Perplexity: parallel (each call is self-contained)
+  // Tavily: sequential (Groq free tier rate limit: 6000 tokens/min)
+  onProgress?.("discovery", `Researching casinos with ${provider.name}...`, 10);
 
-  const [existingOffers, discoveryResults] = await Promise.all([
-    fetchExistingOffers(),
-    discoverAllCasinos(counters),
-  ]);
+  const existingOffersPromise = fetchExistingOffers();
 
-  onProgress?.("matching", `Found ${existingOffers.length} existing offers. Matching...`, 30);
+  type StateResult = { state: typeof STATES[number] } & Awaited<ReturnType<typeof provider.researchState>>;
+  let stateResults: StateResult[];
 
-  // Stage 2: Match casinos per state
+  if (providerType === "tavily") {
+    // Sequential for Tavily — Groq rate limits
+    stateResults = [];
+    for (let i = 0; i < STATES.length; i++) {
+      const state = STATES[i];
+      const result = await provider.researchState(state);
+      searchQueries++;
+      totalCitations += result.citations.length;
+      stateResults.push({ state, ...result });
+      const pct = 10 + Math.round(((i + 1) / STATES.length) * 40);
+      onProgress?.("discovery", `Completed ${state.code} (${result.casinos.length} casinos)`, pct);
+    }
+  } else {
+    // Parallel for Exa/Perplexity — no rate limit concerns
+    stateResults = await Promise.all(
+      STATES.map(async (state, i) => {
+        const result = await provider.researchState(state);
+        searchQueries++;
+        totalCitations += result.citations.length;
+        const pct = 10 + Math.round(((i + 1) / STATES.length) * 40);
+        onProgress?.("discovery", `Completed ${state.code} (${result.casinos.length} casinos)`, pct);
+        return { state, ...result };
+      })
+    );
+  }
+
+  const existingOffers = await existingOffersPromise;
+
+  console.log(`[PIPELINE] Existing offers from Xano: ${existingOffers.length}`);
+  onProgress?.("matching", "Matching casinos against database...", 55);
+
+  // Stage 2: Convert provider results → DiscoveredCasino + DiscoveredOffer, then match
   const allMissing: DiscoveredCasino[] = [];
   const allMatched: { existing: XanoOffer; discovered: DiscoveredCasino }[] = [];
+  const offersByKey = new Map<string, DiscoveredOffer[]>();
 
-  for (const state of STATES) {
-    const stateCasinos = discoveryResults.get(state.code) ?? [];
-    const result = matchCasinos(existingOffers, stateCasinos, state.code);
+  for (const { state, casinos, citations } of stateResults) {
+    const discoveredCasinos: DiscoveredCasino[] = casinos.map((c: CasinoWithOffers) => ({
+      name: c.name,
+      operator: c.operator,
+      website: c.website,
+      license_status: c.license_status,
+      state: state.code,
+      source_urls: citations,
+    }));
+
+    for (const c of casinos) {
+      const key = `${c.name}|${state.code}`;
+      offersByKey.set(
+        key,
+        c.offers.map((o) => ({
+          casino_name: c.name,
+          state: state.code,
+          type: o.type,
+          description: o.description,
+          deposit_required: o.deposit_required,
+          bonus_amount: o.bonus_amount,
+          wagering_requirement: o.wagering_requirement,
+          promo_code: o.promo_code,
+          source_urls: citations,
+        }))
+      );
+    }
+
+    const result = matchCasinos(existingOffers, discoveredCasinos, state.code);
     allMissing.push(...result.missing);
     allMatched.push(...result.matched);
   }
 
-  onProgress?.(
-    "offer-research",
-    `${allMissing.length} missing casinos, ${allMatched.length} matched. Researching offers...`,
-    40
-  );
+  onProgress?.("analysis", "Comparing offers...", 70);
 
-  // Stage 3: Research offers for ALL casinos (matched + missing)
-  const casinosToResearch = [
-    ...allMatched.map((m) => ({
-      name: m.discovered.name,
-      state: m.discovered.state,
-      website: m.discovered.website,
-    })),
-    ...allMissing.map((m) => ({
-      name: m.name,
-      state: m.state,
-      website: m.website,
-    })),
-  ];
-
-  const offersByKey = await researchAllOffers(
-    casinosToResearch,
-    counters,
-    onProgress
-  );
-
-  onProgress?.("analysis", "Analyzing offer comparisons...", 70);
-
-  // Stage 4: LLM analysis for matched casinos
+  // Stage 3: Programmatic comparison first, collect ambiguous cases
   const comparisons: OfferComparison[] = [];
+  const ambiguousCases: AmbiguousCase[] = [];
 
-  for (let i = 0; i < allMatched.length; i++) {
-    const { existing, discovered } = allMatched[i];
+  for (const { existing, discovered } of allMatched) {
     const key = `${discovered.name}|${discovered.state}`;
     const discoveredOffers = offersByKey.get(key) ?? [];
+    const result = compareOffersProgrammatic(discovered.name, discovered.state, existing, discoveredOffers);
 
-    const comparison = await analyzeOfferComparison(
-      discovered.name,
-      discovered.state,
-      existing,
-      discoveredOffers
-    );
-    comparisons.push(comparison);
-    counters.llmQueries++;
-
-    const pct = 70 + Math.round((i / allMatched.length) * 20);
-    onProgress?.(
-      "analysis",
-      `Analyzed ${i + 1}/${allMatched.length} casinos...`,
-      pct
-    );
+    if (result.needsLlm) {
+      ambiguousCases.push({
+        index: comparisons.length,
+        casino_name: discovered.name,
+        state: discovered.state,
+        existing,
+        discoveredOffers,
+        reason: result.reason,
+      });
+    }
+    comparisons.push(result.comparison);
   }
 
-  // Also create comparisons for missing casinos (no existing offer)
+  // Missing casino entries (no comparison needed)
   for (const missing of allMissing) {
     const key = `${missing.name}|${missing.state}`;
     const discoveredOffers = offersByKey.get(key) ?? [];
@@ -129,10 +144,46 @@ export async function runResearchPipeline(
         discovered_offers: discoveredOffers,
         verdict: "no_data",
         confidence: 1,
-        explanation: `New casino not in our database. Found ${discoveredOffers.length} offer(s).`,
+        explanation: `New casino not in database. Found ${discoveredOffers.length} offer(s).`,
         recommended_action: "Add casino and offers to database",
       });
     }
+  }
+
+  // Stage 4: Batch LLM call for ambiguous cases only (0 or 1 call)
+  if (ambiguousCases.length > 0) {
+    onProgress?.(
+      "analysis",
+      `${comparisons.length - ambiguousCases.length} resolved programmatically. Sending ${ambiguousCases.length} ambiguous case(s) to LLM...`,
+      80
+    );
+
+    const llmVerdicts = await batchLlmComparison(ambiguousCases);
+    llmQueries++;
+
+    for (let i = 0; i < ambiguousCases.length; i++) {
+      const ac = ambiguousCases[i];
+      const llmResult = llmVerdicts[i];
+      if (llmResult) {
+        comparisons[ac.index] = {
+          ...comparisons[ac.index],
+          verdict: llmResult.verdict,
+          confidence: llmResult.confidence,
+          explanation: llmResult.explanation,
+          recommended_action: llmResult.recommended_action,
+        };
+      } else {
+        // LLM failed or unavailable — replace "Pending" with honest fallback
+        const c = comparisons[ac.index];
+        comparisons[ac.index] = {
+          ...c,
+          explanation: c.explanation.replace("Pending LLM analysis of ", "Manual review needed for "),
+          recommended_action: "Manual review required — automated comparison inconclusive",
+        };
+      }
+    }
+  } else {
+    onProgress?.("analysis", "All comparisons resolved programmatically.", 85);
   }
 
   onProgress?.("saving", "Saving report...", 95);
@@ -145,10 +196,10 @@ export async function runResearchPipeline(
     comparisons,
     metadata: {
       duration_ms: Date.now() - startTime,
-      search_queries: counters.searchQueries,
-      llm_queries: counters.llmQueries,
-      estimated_cost: 0, // Free tier - no cost
-      total_citations: counters.totalCitations,
+      search_queries: searchQueries,
+      llm_queries: llmQueries + (providerType === "tavily" ? searchQueries : 0),
+      estimated_cost: 0,
+      total_citations: totalCitations,
     },
   };
 
@@ -158,151 +209,299 @@ export async function runResearchPipeline(
   return report;
 }
 
-async function discoverAllCasinos(
-  counters: PipelineCounters
-): Promise<Map<string, DiscoveredCasino[]>> {
-  const results = new Map<string, DiscoveredCasino[]>();
+// --- Programmatic comparison ---
 
-  // Step 1: Search with Exa (semantic search) for each state
-  // Two searches per state: official sources + review sites
-  for (const state of STATES) {
-    counters.searchQueries += 2; // Exa does 2 searches per state
-    try {
-      const exaResults = await discoverCasinosExa(
-        state.name,
-        state.code,
-        state.gaming_commission,
-        state.search_domains
-      );
+interface CompareResult {
+  comparison: OfferComparison;
+  needsLlm: boolean;
+  reason: string;
+}
 
-      const citations = exaResults.allResults.map((r) => r.url);
-      counters.totalCitations += citations.length;
+interface AmbiguousCase {
+  index: number;
+  casino_name: string;
+  state: string;
+  existing: XanoOffer;
+  discoveredOffers: DiscoveredOffer[];
+  reason: string;
+}
 
-      // Build rich context from Exa's full text + highlights
-      const searchContext = exaResults.allResults
-        .map((r) => {
-          const highlights = r.highlights?.length
-            ? `\nKey excerpts: ${r.highlights.join(" | ")}`
-            : "";
-          const text = r.text ? r.text.substring(0, 4000) : "";
-          return `[${r.title}](${r.url})\n${text}${highlights}`;
-        })
-        .join("\n\n---\n\n");
+function compareOffersProgrammatic(
+  casinoName: string,
+  state: string,
+  existing: XanoOffer,
+  discoveredOffers: DiscoveredOffer[]
+): CompareResult {
+  const base = {
+    casino_name: casinoName,
+    state,
+    existing_offer: existing,
+    discovered_offers: discoveredOffers,
+  };
 
-      const jsonSchemaHint = JSON.stringify(DISCOVERY_JSON_SCHEMA, null, 2);
+  // No discovered offers → no_data, no LLM needed
+  if (discoveredOffers.length === 0) {
+    return {
+      needsLlm: false,
+      reason: "",
+      comparison: {
+        ...base,
+        verdict: "no_data",
+        confidence: 0.5,
+        explanation: "No offers found from research to compare against.",
+        recommended_action: "Manual review — research may have missed current offers",
+      },
+    };
+  }
 
-      // Step 2: Use LLM to extract structured casino list
-      counters.llmQueries++;
-      const content = await extractStructuredData(
-        DISCOVERY_SYSTEM_PROMPT,
-        `Based on the following search results, ${buildDiscoveryUserPrompt(state)}\n\nSearch results:\n${searchContext}\n\nIMPORTANT: Extract EVERY casino mentioned across all sources. Do not miss any. Include casinos from regulatory lists, review sites, and any other sources. Only include online casinos (not land-based only).\n\nRespond with JSON matching this schema:\n${jsonSchemaHint}`
-      );
+  const bestDiscovered = discoveredOffers.reduce((best, current) => {
+    const bestBonus = best.bonus_amount ?? 0;
+    const currentBonus = current.bonus_amount ?? 0;
+    return currentBonus > bestBonus ? current : best;
+  }, discoveredOffers[0]);
 
-      const parsed = JSON.parse(content);
-      const casinos: DiscoveredCasino[] = (parsed.casinos ?? []).map(
-        (c: Record<string, string>) => ({
-          name: c.name ?? "",
-          operator: c.operator ?? "",
-          website: c.website ?? "",
-          license_status: c.license_status ?? "",
-          state: state.code,
-          source_urls: citations,
-        })
-      );
-      results.set(state.code, casinos);
-    } catch (err) {
-      console.error(`Failed to parse discovery results for ${state.code}:`, err);
-      results.set(state.code, []);
+  const existingBonus = existing.Expected_Bonus ?? 0;
+  const discoveredBonus = bestDiscovered.bonus_amount ?? 0;
+
+  // Clear type mismatch → different_type, no LLM needed
+  const existingType = existing.offer_type?.toLowerCase() ?? "";
+  const discoveredType = bestDiscovered.type?.toLowerCase() ?? "";
+  const typeMismatch =
+    (existingType.includes("deposit") && discoveredType.includes("no_deposit")) ||
+    (existingType.includes("no_deposit") && discoveredType.includes("deposit_match"));
+
+  if (typeMismatch) {
+    return {
+      needsLlm: false,
+      reason: "",
+      comparison: {
+        ...base,
+        verdict: "different_type",
+        confidence: 0.7,
+        explanation: `Different offer types: existing "${existing.offer_type}" vs discovered "${bestDiscovered.type}".`,
+        recommended_action: "Review — may want to track both offer types",
+      },
+    };
+  }
+
+  // Clear winner by >25% difference → no LLM needed
+  if (existingBonus > 0 && discoveredBonus > 0) {
+    const ratio = discoveredBonus / existingBonus;
+
+    if (ratio > 1.25) {
+      return {
+        needsLlm: false,
+        reason: "",
+        comparison: {
+          ...base,
+          verdict: "discovered_better",
+          confidence: 0.9,
+          explanation: `Discovered offer is clearly better: $${discoveredBonus} vs existing $${existingBonus} bonus.`,
+          recommended_action: "Update offer in database with better terms",
+        },
+      };
+    }
+
+    if (ratio < 0.75) {
+      return {
+        needsLlm: false,
+        reason: "",
+        comparison: {
+          ...base,
+          verdict: "existing_better",
+          confidence: 0.9,
+          explanation: `Existing offer is clearly better: $${existingBonus} vs discovered $${discoveredBonus} bonus.`,
+          recommended_action: "Keep current offer — it's already competitive",
+        },
+      };
     }
   }
 
-  return results;
-}
+  // --- Ambiguous cases: send to LLM ---
 
-async function researchAllOffers(
-  casinos: { name: string; state: string; website: string }[],
-  counters: PipelineCounters,
-  onProgress?: ProgressCallback
-): Promise<Map<string, DiscoveredOffer[]>> {
-  const offersByKey = new Map<string, DiscoveredOffer[]>();
-
-  // Step 1: Batch search with Tavily (advanced depth for quality)
-  const searches = casinos.map((casino) => ({
-    query: buildOfferResearchPrompt(casino.name, casino.state),
-    searchDepth: "advanced" as const,
-    maxResults: 10,
-    includeDomains: extractHostname(casino.website),
-  }));
-
-  counters.searchQueries += searches.length;
-  const searchResponses = await batchSearch(searches, 3);
-
-  // Step 2: Use LLM to extract structured offers from each search result
-  const jsonSchemaHint = JSON.stringify(OFFER_RESEARCH_JSON_SCHEMA, null, 2);
-
-  for (let i = 0; i < casinos.length; i++) {
-    const casino = casinos[i];
-    const res = searchResponses[i];
-    const key = `${casino.name}|${casino.state}`;
-    const citations = res.results.map((r) => r.url);
-    counters.totalCitations += citations.length;
-
-    // Use raw_content for full page data when available
-    const searchContext = res.results
-      .map((r) => {
-        const body = r.raw_content
-          ? r.raw_content.substring(0, 2000)
-          : r.content;
-        return `[${r.title}](${r.url})\n${body}`;
-      })
-      .join("\n\n---\n\n");
-
-    const answerSection = res.answer
-      ? `\n\nAI-generated summary:\n${res.answer}\n\n`
-      : "";
-
-    try {
-      counters.llmQueries++;
-      const content = await extractStructuredData(
-        OFFER_RESEARCH_SYSTEM_PROMPT,
-        `Based on the following search results, ${buildOfferResearchPrompt(casino.name, casino.state)}\n${answerSection}Search results:\n${searchContext}\n\nExtract ALL promotional offers found. Include deposit match amounts, bonus amounts, wagering requirements, and promo codes when available.\n\nRespond with JSON matching this schema:\n${jsonSchemaHint}`
-      );
-
-      const parsed = JSON.parse(content);
-      const offers: DiscoveredOffer[] = (parsed.offers ?? []).map(
-        (o: Record<string, unknown>) => ({
-          casino_name: casino.name,
-          state: casino.state,
-          type: (o.type as string) ?? "",
-          description: (o.description as string) ?? "",
-          deposit_required: o.deposit_required as number | null,
-          bonus_amount: o.bonus_amount as number | null,
-          wagering_requirement: o.wagering_requirement as string | null,
-          promo_code: o.promo_code as string | null,
-          source_urls: citations,
-        })
-      );
-      offersByKey.set(key, offers);
-    } catch {
-      console.error(`Failed to parse offers for ${casino.name}`);
-      offersByKey.set(key, []);
-    }
-
-    if (onProgress && i % 5 === 0) {
-      const pct = 40 + Math.round((i / casinos.length) * 30);
-      onProgress("offer-research", `Researched ${i + 1}/${casinos.length} casinos...`, pct);
-    }
+  // Close bonus amounts (within 25%) — wagering terms may be the tiebreaker
+  if (existingBonus > 0 && discoveredBonus > 0) {
+    return {
+      needsLlm: true,
+      reason: "close_bonus",
+      comparison: {
+        ...base,
+        verdict: "comparable",
+        confidence: 0.4,
+        explanation: `Bonuses are close ($${existingBonus} vs $${discoveredBonus}). Pending LLM analysis of wagering terms.`,
+        recommended_action: "Pending LLM analysis",
+      },
+    };
   }
 
-  return offersByKey;
+  // One or both have $0/null bonus — can't compare numerically
+  if (existingBonus === 0 || discoveredBonus === 0) {
+    return {
+      needsLlm: true,
+      reason: "missing_amounts",
+      comparison: {
+        ...base,
+        verdict: "no_data",
+        confidence: 0.3,
+        explanation: `Cannot compare numerically (existing: $${existingBonus}, discovered: $${discoveredBonus}). Pending LLM analysis of offer descriptions.`,
+        recommended_action: "Pending LLM analysis",
+      },
+    };
+  }
+
+  // Fallback — shouldn't reach here, but send to LLM to be safe
+  return {
+    needsLlm: true,
+    reason: "unclear",
+    comparison: {
+      ...base,
+      verdict: "no_data",
+      confidence: 0.3,
+      explanation: "Could not determine programmatically. Pending LLM analysis.",
+      recommended_action: "Pending LLM analysis",
+    },
+  };
 }
 
-function extractHostname(website: string): string[] | undefined {
-  if (!website) return undefined;
+// --- Batched LLM comparison (1 call for ALL ambiguous cases) ---
+
+interface LlmVerdict {
+  verdict: OfferComparison["verdict"];
+  confidence: number;
+  explanation: string;
+  recommended_action: string;
+}
+
+const VALID_VERDICTS: Set<string> = new Set([
+  "discovered_better", "existing_better", "comparable", "different_type", "no_data",
+]);
+
+async function batchLlmComparison(cases: AmbiguousCase[]): Promise<(LlmVerdict | null)[]> {
+  // Try Groq first, then Perplexity as fallback
+  const groqKey = process.env.GROQ_API_KEY;
+  const perplexityKey = process.env.PERPLEXITY_API_KEY;
+
+  if (!groqKey && !perplexityKey) {
+    console.warn("[PIPELINE] No LLM key available — ambiguous comparisons will use programmatic defaults");
+    return cases.map(() => null);
+  }
+
+  // Build a single prompt with all cases numbered
+  const caseSummaries = cases.map((c, i) => {
+    const existing = c.existing;
+    const best = c.discoveredOffers.reduce((b, cur) =>
+      (cur.bonus_amount ?? 0) > (b.bonus_amount ?? 0) ? cur : b,
+      c.discoveredOffers[0]
+    );
+
+    return `Case ${i + 1}: ${c.casino_name} (${c.state})
+  Reason: ${c.reason}
+  Existing: "${existing.Offer_Name}" — type: ${existing.offer_type}, deposit: $${existing.Expected_Deposit}, bonus: $${existing.Expected_Bonus}
+  Best discovered: "${best.description}" — type: ${best.type}, deposit: $${best.deposit_required ?? "N/A"}, bonus: $${best.bonus_amount ?? "N/A"}, wagering: ${best.wagering_requirement ?? "N/A"}
+  All discovered offers: ${c.discoveredOffers.map((o) => `"${o.description}" ($${o.bonus_amount ?? "N/A"}, wagering: ${o.wagering_requirement ?? "N/A"})`).join("; ")}`;
+  }).join("\n\n");
+
+  const systemPrompt = "You are a casino promotions analyst. Compare existing vs discovered offers considering bonus amounts, deposit requirements, wagering terms, and overall value. Always respond with valid JSON.";
+
+  const userPrompt = `Compare these ${cases.length} casino offer(s). For each, determine which is genuinely better for the player.
+
+${caseSummaries}
+
+Respond with a JSON object:
+{
+  "results": [
+    {
+      "case": 1,
+      "verdict": "discovered_better" | "existing_better" | "comparable" | "different_type" | "no_data",
+      "confidence": 0.0 to 1.0,
+      "explanation": "brief explanation focusing on key differences (wagering, deposit, total value)",
+      "recommended_action": "what to do"
+    }
+  ]
+}`;
+
   try {
-    const url = website.startsWith("http") ? website : `https://${website}`;
-    return [new URL(url).hostname];
-  } catch {
-    return undefined;
+    let content: string;
+
+    if (groqKey) {
+      content = await callGroq(systemPrompt, userPrompt, groqKey);
+    } else {
+      content = await callPerplexity(systemPrompt, userPrompt, perplexityKey!);
+    }
+
+    const parsed = JSON.parse(content);
+    const results: (LlmVerdict | null)[] = [];
+
+    for (let i = 0; i < cases.length; i++) {
+      const r = parsed.results?.find((r: { case: number }) => r.case === i + 1);
+      if (r && VALID_VERDICTS.has(r.verdict)) {
+        results.push({
+          verdict: r.verdict as LlmVerdict["verdict"],
+          confidence: typeof r.confidence === "number" ? Math.min(1, Math.max(0, r.confidence)) : 0.5,
+          explanation: String(r.explanation ?? ""),
+          recommended_action: String(r.recommended_action ?? "Manual review required"),
+        });
+      } else {
+        results.push(null);
+      }
+    }
+
+    return results;
+  } catch (err) {
+    console.error("[PIPELINE] Batch LLM comparison failed:", err);
+    return cases.map(() => null);
   }
+}
+
+async function callGroq(system: string, user: string, apiKey: string): Promise<string> {
+  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: process.env.GROQ_MODEL ?? "llama-3.3-70b-versatile",
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      response_format: { type: "json_object" },
+      temperature: 0.1,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Groq API error ${response.status}: ${errorText}`);
+  }
+
+  const data = await response.json();
+  return data.choices?.[0]?.message?.content ?? "{}";
+}
+
+async function callPerplexity(system: string, user: string, apiKey: string): Promise<string> {
+  const response = await fetch("https://api.perplexity.ai/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: process.env.PERPLEXITY_MODEL ?? "sonar-pro",
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      temperature: 0.1,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Perplexity API error ${response.status}: ${errorText}`);
+  }
+
+  const data = await response.json();
+  return data.choices?.[0]?.message?.content ?? "{}";
 }

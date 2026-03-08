@@ -1,17 +1,26 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { runResearchPipeline } from "@/lib/research-pipeline";
+import { SearchProviderType } from "@/lib/search-provider";
 
 export const maxDuration = 300; // 5 minute timeout for serverless
 
-export async function POST() {
+const VALID_PROVIDERS: SearchProviderType[] = ["exa", "perplexity", "tavily"];
+
+export async function POST(request: NextRequest) {
   try {
+    const body = await request.json().catch(() => ({}));
+    const provider = VALID_PROVIDERS.includes(body.provider)
+      ? (body.provider as SearchProviderType)
+      : "exa";
+
     const report = await runResearchPipeline((stage, detail, percent) => {
       console.log(`[${percent}%] ${stage}: ${detail}`);
-    });
+    }, provider);
 
     return NextResponse.json({
       success: true,
       reportId: report.id,
+      provider,
       summary: {
         missing_casinos: report.missing_casinos.length,
         comparisons: report.comparisons.length,
