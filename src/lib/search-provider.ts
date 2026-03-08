@@ -115,6 +115,11 @@ function buildStateQuery(state: StateConfig): string {
   return `List ALL currently licensed and operational online casinos in ${state.name}. Prioritize official sources: the ${state.gaming_commission} regulatory database and state gaming commission records. For each casino, include: brand name, parent operator, official website, license status, and ALL current new-player promotional CASINO offers (welcome bonuses, deposit matches, free play, no-deposit bonuses). Do NOT include sportsbook-only operators or sportsbook promotions — only online casino games.`;
 }
 
+/** Shorter query for search APIs with character limits (e.g. Tavily 400 char max) */
+function buildShortQuery(state: StateConfig): string {
+  return `Licensed online casinos in ${state.name} with current new player welcome bonus offers, deposit match, no-deposit bonus, and free play promotions. ${state.gaming_commission} regulated operators only, no sportsbooks.`;
+}
+
 /** Retry a fetch call with exponential backoff on 429/5xx */
 async function fetchWithRetry(
   url: string,
@@ -329,7 +334,7 @@ function createTavilyProvider(): SearchProvider {
           Authorization: `Bearer ${tavilyKey}`,
         },
         body: JSON.stringify({
-          query: buildStateQuery(state),
+          query: buildShortQuery(state),
           search_depth: "advanced",
           max_results: 15,
           include_answer: "advanced",
@@ -351,10 +356,12 @@ function createTavilyProvider(): SearchProvider {
 
       console.log(`[Tavily][${state.code}] Got ${citations.length} results, extracting with Groq...`);
 
-      // Build context from search results
+      // Build context from search results — cap total to ~8k chars for Groq free tier limits
+      const maxPerResult = 800;
       const searchContext = (searchData.results ?? [])
+        .slice(0, 10)
         .map((r: { title: string; url: string; raw_content?: string; content: string }) => {
-          const body = r.raw_content ? r.raw_content.substring(0, 3000) : r.content;
+          const body = (r.raw_content ?? r.content ?? "").substring(0, maxPerResult);
           return `[${r.title}](${r.url})\n${body}`;
         })
         .join("\n\n---\n\n");
