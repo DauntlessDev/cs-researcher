@@ -128,7 +128,7 @@ export default function RunButton() {
           value={selectedProvider}
           onChange={(e) => setSelectedProvider(e.target.value)}
           disabled={running}
-          className="px-3 py-2.5 bg-white border border-gray-300 rounded-lg text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+          className="px-3 py-2.5 bg-white border border-gray-300 rounded-lg text-sm text-gray-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {providers.map((p) => (
             <option key={p.name} value={p.name} disabled={!p.available}>
@@ -139,7 +139,7 @@ export default function RunButton() {
         <button
           onClick={handleRun}
           disabled={running || !providers.some((p) => p.name === selectedProvider && p.available)}
-          className="px-6 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          className="px-6 py-2.5 bg-blue-600 text-white rounded-lg font-medium cursor-pointer hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           {running ? (
             <span className="flex items-center gap-2">
