@@ -1,52 +1,8 @@
 # Casino & Offer AI Researcher
 
-An AI-powered research tool that identifies gaps in casino promotional offer coverage across NJ, MI, PA, and WV. It discovers casinos we're not tracking, researches current promotions, and compares them against our existing database — all in a single click with live streaming progress.
+An AI-powered research tool that discovers gaps in casino promotional offer coverage across NJ, MI, PA, and WV — built with a hybrid AI + traditional programming approach.
 
-## Architectural Approach
-
-The system runs a 4-stage pipeline with switchable search providers and smart comparison logic:
-
-```
-┌──────────────────┐    ┌─────────────┐    ┌──────────────────┐    ┌──────────────────┐
-│  1. Discover     │───>│  2. Match   │───>│ 3. Compare       │───>│ 4. LLM Batch     │
-│  (Search Provider)│    │  (Fuzzy)    │    │  (Programmatic)  │    │  (Ambiguous only) │
-└──────────────────┘    └─────────────┘    └──────────────────┘    └──────────────────┘
-  2 parallel searches    Compare against    Clear cases resolved    Only genuinely
-  per state (casinos     Xano DB using      by comparing bonus      ambiguous cases
-  + offers) via Exa,     normalization +    amounts directly —      go to LLM in a
-  Perplexity, or Tavily  Levenshtein        no LLM needed           single batched call
-```
-
-**Stage 1 — Discovery**: For each of the 4 states, the selected search provider finds licensed casinos and their current promotional offers. Exa Deep and Perplexity use native structured output (no separate LLM needed). Tavily uses Groq for extraction.
-
-**Stage 2 — Gap Analysis**: Discovered casinos are fuzzy-matched against the existing Xano database. The matcher normalizes names (strips "Casino", "Online", state codes), checks substring containment, and uses Levenshtein distance (threshold ≤ 2) to handle variations like "DraftKings" vs "Draft Kings".
-
-**Stage 3 — Programmatic Comparison**: Most offer comparisons are resolved without an LLM by comparing bonus amounts directly. Cases with >25% difference, type mismatches, or missing data get clear verdicts immediately.
-
-**Stage 4 — LLM Batch (if needed)**: Only genuinely ambiguous cases (close bonus amounts, complex wagering terms) go to an LLM — all in a single batched call, not one per casino. Typically 0-1 LLM calls per full run.
-
-## Search Providers
-
-The dashboard includes a provider dropdown to switch between search backends:
-
-| Provider | How It Works | API Calls | Cost |
-|----------|-------------|-----------|------|
-| **Exa Deep** (default) | 2 parallel searches per state with `outputSchema` for native structured JSON. No separate LLM needed. | 8 | ~$0.10 |
-| **Perplexity Sonar** | 1 search per state with `response_format: json_schema`. Search + structured output in one call. | 4 | ~$0.08 |
-| **Tavily + Groq** | Tavily search + Groq LLM (Llama 3.3 70B) for extraction. States run sequentially to respect rate limits. | 8 | ~$0.02 |
-
-Providers without an API key are automatically disabled in the dropdown.
-
-## Key Features
-
-- **Live Streaming Progress** — Real-time progress bar and terminal-style log panel in the UI showing each pipeline stage as it runs
-- **Switchable Providers** — Dropdown to switch between Exa Deep, Perplexity Sonar, and Tavily + Groq
-- **Smart Comparison** — Programmatic first (compare numbers), LLM only for ambiguous cases (0-1 calls total)
-- **Cross-State Offer Comparison Table** — See the same casino's best offer across NJ/MI/PA/WV side-by-side, with the best offer highlighted
-- **EV (Expected Value) Scoring** — Bonus amount alone is misleading. A $1,000 bonus with 50x wagering is worse than $500 with 10x. The EV score (bonus / wagering multiplier) surfaces truly profitable offers
-- **State & Verdict Filters** — Drill into specific states or verdict types (e.g., show only "Better Offer Found")
-- **Per-State Breakdown** — Executive summary shows missing casinos and better offers per state
-- **Source Citations** — Every finding links back to the source URL for human verification
+---
 
 ## Setup
 
@@ -57,7 +13,7 @@ Providers without an API key are automatically disabled in the dropdown.
   - [Perplexity](https://docs.perplexity.ai) — sign up, get API key
   - [Tavily](https://tavily.com) + [Groq](https://console.groq.com) — both keys required
 
-### Install
+### Install & Run
 
 ```bash
 cd casino-researcher
@@ -77,19 +33,119 @@ GROQ_API_KEY=your-groq-api-key-here
 CRON_SECRET=any-random-string
 ```
 
-### Run
-
 ```bash
 npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000), select a provider from the dropdown, and click **Run Research**. Progress streams live to the UI.
 
+### Deployment
+
+```bash
+npx vercel
+# Set environment variables in Vercel dashboard
+# Cron job is configured automatically via vercel.json
+```
+
+---
+
+## How It Works
+
+The dashboard runs a 4-stage pipeline in 60-90 seconds:
+
+```
+┌──────────────────┐    ┌─────────────┐    ┌──────────────────┐    ┌──────────────────┐
+│  1. Discover     │───>│  2. Match   │───>│ 3. Compare       │───>│ 4. LLM Batch     │
+│  (AI Search)     │    │  (Code)     │    │  (Code)          │    │  (AI — if needed) │
+└──────────────────┘    └─────────────┘    └──────────────────┘    └──────────────────┘
+  AI searches for        Fuzzy-match        Clear cases resolved    Only genuinely
+  casinos + offers       against Xano DB    by comparing bonus      ambiguous cases
+  per state              (Levenshtein)      amounts — no LLM        in a single batch
+```
+
+1. **Discovery** — AI searches for licensed casinos and current offers (2 searches per state, all 4 states staggered in parallel)
+2. **Matching** — Fuzzy-matches discovered casinos against the Xano database to find gaps (normalization + Levenshtein distance)
+3. **Comparison** — Resolves clear cases programmatically by comparing bonus amounts (>25% difference = clear verdict)
+4. **LLM Batch** — Only genuinely ambiguous cases (close bonuses, complex wagering) go to an LLM in a single batched call
+
+---
+
+## Why Hybrid AI + Code (Not Pure LLM)
+
+The common approach is to throw everything at an LLM — search, extract, compare, decide. That's expensive, slow, and often **less accurate** than code for the parts that don't need AI.
+
+**The principle: AI for fuzzy problems, code for precise problems.**
+
+| Task | Approach | Why |
+|------|----------|-----|
+| Web research | AI (Exa / Perplexity / Tavily) | Broad search — AI's strength |
+| Data extraction | Native provider output | Exa/Perplexity return structured JSON directly — no LLM middleman |
+| Name matching | Code (Levenshtein + normalization) | Deterministic, no hallucination risk |
+| Offer comparison | Code (numeric) | "Is $1500 > $1000?" is an `if` statement, not a prompt. Code is more accurate. |
+| Ambiguous cases | LLM (single batched call) | Complex wagering terms genuinely need reasoning |
+| EV scoring | Code (formula) | bonus / wagering = always correct, always free |
+| Cross-state grouping | Code (sort + group) | Pure data transformation — AI adds nothing here |
+
+When we do use the LLM, we help it succeed: batch all ambiguous cases into one call with clean structured input. Less noise = better output. We're not just cutting costs — we're making the AI **more accurate** by only giving it problems it's actually good at.
+
+### The Evolution
+
+1. **v1 — Tavily + Gemini:** ~90 API calls. Every result through an LLM for extraction and analysis. Worked but slow and expensive.
+2. **v2 — Exa + OpenRouter:** Better discovery, same LLM-heavy pattern. Still ~90 calls.
+3. **v3 — Current:** Asked "what actually needs AI?" Only the search. Extraction → native structured output. Comparison → code. LLM → ambiguous cases only. **8 calls + 0-1 LLM. 91% reduction.**
+
+| | Pure LLM | Hybrid |
+|--|----------|--------|
+| API calls | ~90 | 8 + 0-1 |
+| Cost per run | $0.35–2.00 | $0.10 |
+| Comparison accuracy | LLM hallucinates math | Deterministic |
+| Speed | Minutes | 60-90s |
+
+---
+
+## Search Providers
+
+Different providers find different things — the team can run multiple and compare for better total coverage. Not locked into one provider's blind spots.
+
+| Provider | How It Works | API Calls | Cost |
+|----------|-------------|-----------|------|
+| **Exa Deep** (default) | Native structured JSON via `outputSchema` — no LLM extraction needed | 8 | ~$0.10 |
+| **Perplexity Sonar** | Search + structured output in one call via `response_format` | 4 | ~$0.08 |
+| **Tavily + Groq** | Tavily search + Groq LLM (Llama 3.3 70B) for extraction | 8 | ~$0.02 |
+
+Providers without an API key are automatically disabled in the dropdown.
+
+---
+
+## Key Features
+
+### Live Streaming Progress
+A 60-90 second pipeline with just a spinner feels broken. Every stage streams to the UI in real-time — progress bar, log entries, state completions. If something fails, you see *where* it failed.
+
+### Executive Summary with Per-State Breakdown
+"5 missing casinos" isn't actionable. "3 in NJ, 2 in PA" is — the team can prioritize by market size. Designed to answer "what do I do next?" not "what happened?"
+
+### Cross-State Offer Comparison Table
+Same brand, different state, different promotion. If BetMGM offers $1500 in Michigan but we show $1000 for New Jersey, that's an immediate coverage gap. Pure code — grouping and highlighting data we already have.
+
+### EV (Expected Value) Scoring
+Bonus amount alone is misleading. A $1000 bonus with 50x wagering is worse than $500 with 10x. EV = bonus / wagering — it's a formula, always correct, always free. An LLM would sometimes get this math wrong.
+
+### Source Citations on Everything
+AI results without citations are just claims. Every finding links to its source — one click to verify. The system is a research assistant, not an oracle.
+
+### Verdict Filters
+The content team doesn't review 30+ comparisons. They filter to "Better Offer Found" and get an actionable shortlist of 3-5 items that need updating right now.
+
+---
+
 ## Execution Model
 
-- **On-demand**: Click "Run Research" in the dashboard (with live streaming progress)
-- **Scheduled**: Vercel cron runs daily at 6am UTC (configured in `vercel.json`)
-- **API**: `POST /api/research/run` — supports `{ stream: true }` for streaming or plain JSON response
+- **On-demand**: Click "Run Research" in the dashboard
+- **Scheduled**: Vercel cron runs daily at 6am UTC (`vercel.json`) — stays current automatically
+- **API**: `POST /api/research/run` — supports `{ stream: true }` for streaming or plain JSON
+
+---
 
 ## Project Structure
 
@@ -119,34 +175,31 @@ src/
     └── index.ts               # TypeScript interfaces + state config
 ```
 
-## Efficiency
+---
 
-| Metric | Old Pipeline | Current Pipeline |
-|--------|-------------|-----------------|
-| API calls | ~90 across 3 providers | ~8 Exa + 0-1 LLM |
-| Separate LLM extraction | Every result | None (native structured output) |
-| Offer comparison | Every casino via LLM | Programmatic first, LLM batch for ambiguous only |
-| Cost per run | ~$0.35-2.00 | ~$0.10 (Exa Deep) |
+## Technical Decisions
 
-## Deployment
+- **Exa schema constraint:** Exa Deep enforces max depth of 2 and max 10 properties. Instead of fighting it, I split into two focused queries (casinos + offers) running in parallel. API limitation → design advantage — targeted queries return better data than one overloaded query.
+- **Provider abstraction:** One interface, three implementations. Adding a new provider is one file implementing one contract. The pipeline doesn't know or care which provider it's using.
+- **Streaming:** Newline-delimited JSON from Next.js API route → React UI with live progress bar and terminal-style logs.
+- **Rate limit handling:** Exa calls staggered with 600ms offsets between states. Tavily+Groq runs states sequentially. Retry with exponential backoff on 429/5xx.
 
-```bash
-npx vercel
-# Set environment variables in Vercel dashboard
-# Cron job is configured automatically via vercel.json
-```
+---
 
-## Trade-offs & Limitations
+## Trade-offs
 
-- **Storage is ephemeral on Vercel** — Reports are saved to filesystem (`/tmp` on serverless). For production, a database or S3 would provide persistence across deployments.
-- **AI accuracy is not 100%** — All findings include source URLs for human verification. The system surfaces candidates for review, not ground truth.
-- **Exa's offer coverage varies by state** — Some casinos return 0 offers. A second pass targeting those specific casinos could fill gaps.
-- **Programmatic comparison can't evaluate complex multi-part offers** — "25 free + 100% match up to $1000 over 3 deposits" requires LLM analysis (handled by the ambiguous case batch).
+- **Ephemeral storage** — Reports use filesystem (`/tmp` on Vercel), lost on cold starts. Speed-of-implementation tradeoff. Production → Postgres or Vercel KV.
+- **Coverage gaps** — Some casinos return 0 offers. Broad AI search isn't exhaustive. A targeted second pass per casino would fill gaps.
+- **Complex multi-part offers** — "$25 free + 100% match over 3 deposits" can't reduce to one number. That's what the LLM fallback handles, but it's not perfect.
 
-## What I'd Improve With More Time
+## What I'd Add With More Time
 
-- **Persistent storage** — Vercel KV or Postgres instead of ephemeral filesystem
-- **Historical tracking** — Diff between runs to detect when offers change or expire
-- **Casino-specific second pass** — Re-search casinos with missing offers for better coverage
-- **Email/Slack alerts** — Notifications when better offers are found
-- **Side-by-side provider comparison** — Run Exa + Perplexity simultaneously, merge results
+- **Persistent storage** — Postgres or Vercel KV for reports that survive deployments
+- **Historical tracking** — Diff between runs to catch expiring or changing promotions
+- **Casino-specific second pass** — Re-search casinos that returned 0 offers
+- **Slack/email alerts** — Notify when better offers are found
+- **Multi-provider merge** — Run Exa + Perplexity simultaneously, combine for maximum coverage
+
+---
+
+> The goal wasn't the most AI-heavy system — it was the most effective one. AI for broad research and ambiguous reasoning. Code for math, matching, and formatting. 90 seconds, $0.10, actionable results — not because we used more AI, but because we used it where it matters.
